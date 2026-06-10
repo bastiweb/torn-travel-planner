@@ -118,7 +118,7 @@ public partial class MainWindow : Window
         MessageBoxResult result = MessageBox.Show(
             this,
             $"Version {updateInfo.TagName} is available.\n\nDownload size: {updateInfo.AssetSizeText}\n\nDownload and install now?\n\n{releaseNotes}",
-            "Update available",
+            "Torn Stock Travel Update",
             MessageBoxButton.YesNo,
             MessageBoxImage.Information);
 
