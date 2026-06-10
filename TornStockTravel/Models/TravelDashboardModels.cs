@@ -34,7 +34,7 @@ public sealed record TravelItem(
 
     public DateTimeOffset? RestockEstimateUtc => RestockInfo?.EstimatedAtUtc ?? ParseTornCityTime(RestockInfo?.EstimatedAtTct);
 
-    public DateTimeOffset? StockoutEstimateUtc => RestockInfo?.StockoutAtUtc;
+    public DateTimeOffset? StockoutEstimateUtc => RestockInfo?.StockoutAtUtc ?? ParseTornCityTime(RestockInfo?.StockoutAtTct);
 
     public TimeSpan RestockArrivalLeadTime => TimeSpan.FromMinutes(2);
 
@@ -79,29 +79,34 @@ public sealed record TravelItem(
 
     public string RestockConfidenceText => RestockInfo?.Confidence ?? "-";
 
-    public string RestockEstimateText => RestockInfo?.EstimatedAtTct ?? "-";
+    public string RestockEstimateText => FormatLocalTime(RestockEstimateUtc);
+
+    public string RestockEstimateLabelText => $"Restock ETA: {RestockEstimateText}";
 
     public string RestockWindowText => RestockEstimateUtc is null
         ? "-"
-        : $"{RestockWindowStartUtc!.Value:HH:mm}-{RestockWindowEndUtc!.Value:HH:mm} TCT";
+        : $"{FormatLocalTimeOnly(RestockWindowStartUtc)}-{FormatLocalTimeOnly(RestockWindowEndUtc)} local";
+
+    public string RestockWindowLabelText => $"Arrival window: {RestockWindowText}";
 
     public string RestockAvailabilityText => RestockInfo?.GetAvailabilityLabel(AvailabilityMode) ?? "-";
 
     public string StockoutEstimateText => StockoutEstimateUtc is null
         ? "-"
-        : $"{StockoutEstimateUtc.Value:HH:mm} TCT";
+        : FormatLocalTime(StockoutEstimateUtc);
+
+    public string StockoutEstimateLabelText => $"Stockout ETA: {StockoutEstimateText}";
 
     public string StockoutConfidenceText => RestockInfo?.StockoutConfidenceText ?? "-";
+
+    public string RestockConfidenceLabelText => $"Restock: {RestockConfidenceText}";
+
+    public string StockoutConfidenceLabelText => $"Stockout: {StockoutConfidenceText}";
 
     public string LatestDepartureLocalText => LatestDepartureUtc is null
         ? "-"
         : IsDepartureTooLate ? "Too late"
         : LatestDepartureUtc.Value.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
-
-    public string LatestDepartureTctText => LatestDepartureUtc is null
-        ? "-"
-        : IsDepartureTooLate ? string.Empty
-        : LatestDepartureUtc.Value.UtcDateTime.ToString("HH:mm 'TCT'", CultureInfo.InvariantCulture);
 
     public string FlightDurationText => RoundTripDuration is null
         ? "-"
@@ -112,6 +117,20 @@ public sealed record TravelItem(
         return duration.Hours > 0
             ? $"{duration.Hours}h {duration.Minutes}m"
             : $"{duration.Minutes}m";
+    }
+
+    private static string FormatLocalTime(DateTimeOffset? value)
+    {
+        return value is null
+            ? "-"
+            : value.Value.ToLocalTime().ToString("HH:mm 'local'", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatLocalTimeOnly(DateTimeOffset? value)
+    {
+        return value is null
+            ? "-"
+            : value.Value.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
     }
 
     private static DateTimeOffset? ParseTornCityTime(string? tctTime)

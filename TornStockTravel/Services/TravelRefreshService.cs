@@ -13,7 +13,9 @@ public sealed class TravelRefreshService : IDisposable
     private readonly TornInventoryClient _tornInventoryClient;
     private readonly TornTravelStatusClient _tornTravelStatusClient;
     private readonly TornMoneyClient _tornMoneyClient;
+    private readonly TornBarsClient _tornBarsClient;
     private readonly DroqsRestockClient _droqsRestockClient;
+    private readonly DroqsForecastClient _droqsForecastClient;
     private readonly DispatcherTimer _timer;
     private string _tornApiKey;
     private IReadOnlyDictionary<int, decimal> _bazaarPrices;
@@ -37,7 +39,9 @@ public sealed class TravelRefreshService : IDisposable
         _tornInventoryClient = new TornInventoryClient();
         _tornTravelStatusClient = new TornTravelStatusClient();
         _tornMoneyClient = new TornMoneyClient();
+        _tornBarsClient = new TornBarsClient();
         _droqsRestockClient = new DroqsRestockClient();
+        _droqsForecastClient = new DroqsForecastClient();
         _tornApiKey = tornApiKey;
         _bazaarPrices = bazaarPrices ?? new Dictionary<int, decimal>();
         _buyCapacity = buyCapacity;
@@ -54,6 +58,8 @@ public sealed class TravelRefreshService : IDisposable
             TravelRefreshStatus.Idle,
             null,
             Array.Empty<TravelDestination>(),
+            null,
+            null,
             null,
             null,
             null,
@@ -157,21 +163,36 @@ public sealed class TravelRefreshService : IDisposable
                     () => _tornMoneyClient.FetchMoneyAsync(_tornApiKey),
                     _state.MoneyStatus,
                     warnings);
+            Task<TornBarsStatus?> barsStatusTask = string.IsNullOrWhiteSpace(_tornApiKey)
+                ? Task.FromResult<TornBarsStatus?>(null)
+                : FetchOptionalAsync(
+                    "Torn bars",
+                    () => _tornBarsClient.FetchBarsAsync(_tornApiKey),
+                    _state.BarsStatus,
+                    warnings);
             Task<IReadOnlyDictionary<string, DroqsRestockInfo>> restocksTask =
                 FetchOptionalAsync(
                     "DroqsDB restocks",
                     () => _droqsRestockClient.FetchRestockingSoonAsync(),
                     new Dictionary<string, DroqsRestockInfo>(),
                     warnings);
+            Task<DroqsForecastSnapshot?> forecastTask =
+                FetchOptionalAsync(
+                    "DroqsDB daily forecast",
+                    () => _droqsForecastClient.FetchDailyForecastAsync(),
+                    _state.ForecastSnapshot,
+                    warnings);
 
-            await Task.WhenAll(dataTask, itemDetailsTask, inventoryTask, travelStatusTask, moneyStatusTask, restocksTask);
+            await Task.WhenAll(dataTask, itemDetailsTask, inventoryTask, travelStatusTask, moneyStatusTask, barsStatusTask, restocksTask, forecastTask);
 
             JsonElement data = await dataTask;
             IReadOnlyDictionary<int, TornItemDetails> itemDetails = await itemDetailsTask;
             IReadOnlyDictionary<int, TornInventoryItem> inventory = await inventoryTask;
             TornTravelStatus? travelStatus = await travelStatusTask;
             TornMoneyStatus? moneyStatus = await moneyStatusTask;
+            TornBarsStatus? barsStatus = await barsStatusTask;
             IReadOnlyDictionary<string, DroqsRestockInfo> restocks = await restocksTask;
+            DroqsForecastSnapshot? forecast = await forecastTask;
             IReadOnlyList<TravelDestination> destinations =
                 TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, _availabilityMode, restocks);
 
@@ -182,6 +203,8 @@ public sealed class TravelRefreshService : IDisposable
                 Destinations = destinations,
                 TravelStatus = travelStatus,
                 MoneyStatus = moneyStatus,
+                BarsStatus = barsStatus,
+                ForecastSnapshot = forecast,
                 Error = warnings.IsEmpty
                     ? null
                     : string.Join(Environment.NewLine, warnings.OrderBy(warning => warning, StringComparer.CurrentCultureIgnoreCase)),
@@ -261,6 +284,8 @@ public sealed class TravelRefreshService : IDisposable
         _tornInventoryClient.Dispose();
         _tornTravelStatusClient.Dispose();
         _tornMoneyClient.Dispose();
+        _tornBarsClient.Dispose();
         _droqsRestockClient.Dispose();
+        _droqsForecastClient.Dispose();
     }
 }

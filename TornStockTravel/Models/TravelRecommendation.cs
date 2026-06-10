@@ -25,9 +25,9 @@ public sealed record TravelRecommendation(
 
     public string DestinationText => $"{DestinationName} ({DestinationCode.ToUpperInvariant()})";
 
-    public string DepartText => $"{DepartAt.LocalDateTime:HH:mm} local / {DepartAt.UtcDateTime:HH:mm} TCT";
+    public string DepartText => $"{DepartAt.LocalDateTime:HH:mm} local";
 
-    public string ArriveText => $"{ArriveAt.LocalDateTime:HH:mm} local / {ArriveAt.UtcDateTime:HH:mm} TCT";
+    public string ArriveText => $"{ArriveAt.LocalDateTime:HH:mm} local";
 
     public string ProfitText => Profit.ToString("N0");
 

@@ -188,7 +188,7 @@ public sealed class DroqsRestockClient : IDisposable
         return $"{itemId}:{normalizedCountry}";
     }
 
-    private static string NormalizeCountry(string country)
+    public static string NormalizeCountry(string country)
     {
         string trimmed = country.Trim();
         return CountryAliases.TryGetValue(trimmed, out string? code)

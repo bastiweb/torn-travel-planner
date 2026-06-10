@@ -9,6 +9,8 @@ namespace TornStockTravel;
 
 public partial class MainWindow : Window
 {
+    private static readonly TimeSpan DefaultPlannerWindowDuration = TimeSpan.FromHours(12);
+
     private readonly AppSettingsService _settingsService;
     private readonly TravelRefreshService _travelRefreshService;
     private readonly DispatcherTimer _countdownTimer;
@@ -16,6 +18,11 @@ public partial class MainWindow : Window
     private AppSettings _settings;
     private TornTravelStatus? _travelStatus;
     private TornMoneyStatus? _moneyStatus;
+    private TornBarsStatus? _barsStatus;
+    private DroqsForecastSnapshot? _forecastSnapshot;
+    private TravelPlannerStrategy _plannerStrategy = TravelPlannerStrategy.Balanced;
+    private DateTimeOffset _plannerWindowStart;
+    private DateTimeOffset _plannerWindowEnd;
     private string? _lastShownError;
     private IReadOnlyList<TravelDestination> _allDestinations = Array.Empty<TravelDestination>();
 
@@ -33,6 +40,9 @@ public partial class MainWindow : Window
         MaxSpendPercentBox.Text = _settings.MaxSpendPercent.ToString("N0");
         SelectRestockAvailabilityMode(_settings.RestockAvailabilityMode);
         RestockAvailabilityModeBox.SelectionChanged += RestockAvailabilityModeBox_SelectionChanged;
+        SelectPlannerStrategy(_plannerStrategy);
+        PlannerStrategyBox.SelectionChanged += PlannerStrategyBox_SelectionChanged;
+        InitializePlannerWindow();
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.TornApiKey)
             ? "No key saved"
             : "Key saved";
@@ -70,6 +80,7 @@ public partial class MainWindow : Window
     {
         _travelRefreshService.StateChanged -= OnTravelStateChanged;
         RestockAvailabilityModeBox.SelectionChanged -= RestockAvailabilityModeBox_SelectionChanged;
+        PlannerStrategyBox.SelectionChanged -= PlannerStrategyBox_SelectionChanged;
         _countdownTimer.Stop();
         _countdownTimer.Tick -= CountdownTimer_Tick;
         _errorToastTimer.Stop();
@@ -122,6 +133,7 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         MaxSpendPercentBox.Text = percent.ToString("N0");
         UpdateRecommendation();
+        UpdateTravelPlanner();
     }
 
     private async void RestockAvailabilityModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -139,8 +151,43 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         _travelRefreshService.SetRestockAvailabilityMode(mode);
         UpdateRecommendation();
+        UpdateTravelPlanner();
 
         await _travelRefreshService.RefreshNowAsync();
+    }
+
+    private void PlannerStrategyBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _plannerStrategy = GetSelectedPlannerStrategy();
+        UpdateTravelPlanner();
+    }
+
+    private void PlannerWindow_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateTravelPlanner();
+    }
+
+    private void PlannerFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateTravelPlanner();
+    }
+
+    private void PlannerWindowBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        UpdateTravelPlanner();
+        Keyboard.ClearFocus();
+    }
+
+    private void PlannerUseNowButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetPlannerWindow(DateTimeOffset.Now, DateTimeOffset.Now.Add(DefaultPlannerWindowDuration));
+        UpdateTravelPlanner();
     }
 
     private async void SaveBuyCapacityButton_Click(object sender, RoutedEventArgs e)
@@ -215,8 +262,12 @@ public partial class MainWindow : Window
         StatusText.Text = GetStatusLabel(state.Status);
         _travelStatus = state.TravelStatus;
         _moneyStatus = state.MoneyStatus;
+        _barsStatus = state.BarsStatus;
+        _forecastSnapshot = state.ForecastSnapshot;
         UpdateTravelStatus();
         UpdateMoneyStatus();
+        UpdateBarsStatus();
+        UpdateForecastStatus();
         LastUpdatedText.Text = FormatDate(state.LastUpdated);
         NextRefreshText.Text = FormatDate(state.NextRefreshAt);
         _allDestinations = state.Destinations;
@@ -224,6 +275,7 @@ public partial class MainWindow : Window
         IntervalText.Text = $"Interval: {state.RefreshInterval.TotalMinutes:0} minutes";
         RefreshButton.IsEnabled = state.Status != TravelRefreshStatus.Loading;
         UpdateRecommendation();
+        UpdateTravelPlanner();
         ApplyDashboardFilter();
 
         ShowErrorToastIfNeeded(state.Error);
@@ -339,6 +391,54 @@ public partial class MainWindow : Window
     {
         WalletText.Text = _moneyStatus is null ? "-" : $"Wallet ${_moneyStatus.WalletText}";
         VaultText.Text = _moneyStatus is null ? "-" : $"Vault ${_moneyStatus.VaultText} | Total ${_moneyStatus.TotalText}";
+    }
+
+    private void UpdateBarsStatus()
+    {
+        if (_barsStatus is null)
+        {
+            PlannerBarsText.Text = "Energy/nerve unavailable";
+            return;
+        }
+
+        PlannerBarsText.Text = $"Energy {_barsStatus.Energy.ValueText}, full in {_barsStatus.Energy.FullInText} | Nerve {_barsStatus.Nerve.ValueText}, full in {_barsStatus.Nerve.FullInText}";
+    }
+
+    private void UpdateForecastStatus()
+    {
+        PlannerForecastText.Text = _forecastSnapshot is null
+            ? "Forecast unavailable"
+            : _forecastSnapshot.StatusText;
+    }
+
+    private void UpdateTravelPlanner()
+    {
+        if (!TryReadPlannerWindow(out DateTimeOffset windowStart, out DateTimeOffset windowEnd, out string? validationError))
+        {
+            PlannerWindowSummaryText.Text = validationError ?? "Invalid active window.";
+            TravelPlannerCards.ItemsSource = Array.Empty<TravelPlanCard>();
+            return;
+        }
+
+        TravelPlannerSessionPlan plan = TravelPlannerService.GetSessionPlan(
+            _allDestinations,
+            _travelStatus,
+            _moneyStatus,
+            _barsStatus,
+            _forecastSnapshot,
+            _settings.MaxSpendPercent,
+            _plannerStrategy,
+            GetPlannerFilters(),
+            DateTimeOffset.Now,
+            windowStart,
+            windowEnd);
+
+        PlannerWindowSummaryText.Text = plan.SummaryText;
+        TravelPlannerCards.ItemsSource = plan.Trips.Count == 0
+            ? new[] { new TravelPlanCard("No session route", plan.StatusText, null) }
+            : plan.Trips
+                .Select((trip, index) => new TravelPlanCard($"Trip {index + 1}", "No trip available.", trip))
+                .ToList();
     }
 
     private void UpdateRecommendation()
@@ -501,6 +601,124 @@ public partial class MainWindow : Window
         }
 
         return AppSettings.DefaultRestockAvailabilityMode;
+    }
+
+    private void SelectPlannerStrategy(TravelPlannerStrategy strategy)
+    {
+        foreach (ComboBoxItem item in PlannerStrategyBox.Items.OfType<ComboBoxItem>())
+        {
+            if (item.Tag is string tag
+                && Enum.TryParse(tag, ignoreCase: true, out TravelPlannerStrategy itemStrategy)
+                && itemStrategy == strategy)
+            {
+                PlannerStrategyBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        PlannerStrategyBox.SelectedIndex = 1;
+    }
+
+    private TravelPlannerStrategy GetSelectedPlannerStrategy()
+    {
+        if (PlannerStrategyBox.SelectedItem is ComboBoxItem item
+            && item.Tag is string tag
+            && Enum.TryParse(tag, ignoreCase: true, out TravelPlannerStrategy strategy))
+        {
+            return strategy;
+        }
+
+        return TravelPlannerStrategy.Balanced;
+    }
+
+    private void InitializePlannerWindow()
+    {
+        SetPlannerWindow(DateTimeOffset.Now, DateTimeOffset.Now.Add(DefaultPlannerWindowDuration));
+    }
+
+    private void SetPlannerWindow(DateTimeOffset start, DateTimeOffset end)
+    {
+        _plannerWindowStart = start;
+        _plannerWindowEnd = end;
+        PlannerStartTimeBox.Text = start.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture);
+        PlannerEndTimeBox.Text = end.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture);
+    }
+
+    private bool TryReadPlannerWindow(
+        out DateTimeOffset windowStart,
+        out DateTimeOffset windowEnd,
+        out string? validationError)
+    {
+        validationError = null;
+        DateTime localToday = DateTime.Today;
+
+        if (!TryParsePlannerTime(PlannerStartTimeBox.Text, out TimeSpan startTime))
+        {
+            windowStart = _plannerWindowStart;
+            windowEnd = _plannerWindowEnd;
+            validationError = "Active from must use HH:mm.";
+            return false;
+        }
+
+        DateTime startLocal = localToday.Add(startTime);
+        DateTime endLocal;
+
+        if (string.IsNullOrWhiteSpace(PlannerEndTimeBox.Text))
+        {
+            endLocal = startLocal.Add(DefaultPlannerWindowDuration);
+        }
+        else if (TryParsePlannerTime(PlannerEndTimeBox.Text, out TimeSpan endTime))
+        {
+            endLocal = localToday.Add(endTime);
+        }
+        else
+        {
+            windowStart = _plannerWindowStart;
+            windowEnd = _plannerWindowEnd;
+            validationError = "Active until must use HH:mm or be empty for 12 hours.";
+            return false;
+        }
+
+        if (endLocal <= startLocal)
+        {
+            endLocal = endLocal.AddDays(1);
+        }
+
+        windowStart = new DateTimeOffset(startLocal);
+        windowEnd = new DateTimeOffset(endLocal);
+        _plannerWindowStart = windowStart;
+        _plannerWindowEnd = windowEnd;
+        return true;
+    }
+
+    private static bool TryParsePlannerTime(string value, out TimeSpan time)
+    {
+        string trimmed = value.Trim();
+        string[] formats = { "h\\:mm", "hh\\:mm" };
+        return TimeSpan.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, out time)
+            || TimeSpan.TryParse(trimmed, CultureInfo.CurrentCulture, out time);
+    }
+
+    private TravelPlannerFilters GetPlannerFilters()
+    {
+        string targetItem = PlannerTargetItemBox.Text.Trim();
+        IReadOnlyList<string> excludedItems = SplitPlannerFilterText(PlannerExcludedItemsBox.Text);
+        HashSet<string> excludedCountryCodes = PlannerExcludedCountryPanel.Children
+            .OfType<CheckBox>()
+            .Where(checkBox => checkBox.IsChecked == true && checkBox.Tag is string)
+            .Select(checkBox => ((string)checkBox.Tag).ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new TravelPlannerFilters(targetItem, excludedItems, excludedCountryCodes);
+    }
+
+    private static IReadOnlyList<string> SplitPlannerFilterText(string value)
+    {
+        return value
+            .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
     }
 
 }

@@ -17,6 +17,8 @@ public sealed record TravelRefreshState(
     IReadOnlyList<TravelDestination> Destinations,
     TornTravelStatus? TravelStatus,
     TornMoneyStatus? MoneyStatus,
+    TornBarsStatus? BarsStatus,
+    DroqsForecastSnapshot? ForecastSnapshot,
     string? Error,
     DateTimeOffset? LastUpdated,
     DateTimeOffset? LastStarted,

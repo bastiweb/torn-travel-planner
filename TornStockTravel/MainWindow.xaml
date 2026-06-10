@@ -410,8 +410,8 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                               <DataTemplate>
-                                <Border Width="246"
-                                        MinHeight="448"
+                                <Border Width="312"
+                                        MinHeight="462"
                                         Background="#0F172A"
                                         BorderBrush="#2E405A"
                                         BorderThickness="1"
@@ -593,10 +593,6 @@
                                                    Foreground="#93C5FD"
                                                    FontSize="14"
                                                    FontWeight="Bold" />
-                                        <TextBlock Text="{Binding LatestDepartureTctText, Mode=OneWay}"
-                                                   Foreground="#CBD5E1"
-                                                   FontSize="11"
-                                                   FontWeight="SemiBold" />
                                       </StackPanel>
                                       <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                                         <TextBlock Text="Cash needed"
@@ -614,47 +610,56 @@
 
                                     <Grid Grid.Row="6" Margin="0,12,0,0">
                                       <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="2*" MinWidth="0" />
+                                        <ColumnDefinition Width="*" MinWidth="96" />
                                       </Grid.ColumnDefinitions>
                                       <StackPanel>
                                         <TextBlock Text="Restock"
                                                    Foreground="#64748B"
                                                    FontSize="10"
                                                    FontWeight="Bold" />
-                                        <TextBlock Text="{Binding RestockEstimateText, Mode=OneWay}"
+                                        <TextBlock Text="{Binding RestockEstimateLabelText, Mode=OneWay}"
                                                    Foreground="#C4B5FD"
                                                    FontSize="14"
-                                                   FontWeight="Bold" />
-                                        <TextBlock Text="{Binding RestockWindowText, Mode=OneWay}"
+                                                   FontWeight="Bold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding RestockWindowLabelText, Mode=OneWay}"
                                                    Foreground="#CBD5E1"
                                                    FontSize="11"
-                                                   FontWeight="SemiBold" />
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding RestockAvailabilityText, Mode=OneWay}"
                                                    Foreground="#94A3B8"
                                                    FontSize="11"
-                                                   FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding StockoutEstimateText, Mode=OneWay, StringFormat=Stockout {0}}"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   MaxHeight="44" />
+                                        <TextBlock Text="{Binding StockoutEstimateLabelText, Mode=OneWay}"
                                                    Foreground="#FCA5A5"
                                                    FontSize="11"
-                                                   FontWeight="SemiBold" />
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
                                       </StackPanel>
-                                      <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                      <StackPanel Grid.Column="1"
+                                                  HorizontalAlignment="Stretch"
+                                                  Margin="10,0,0,0">
                                         <TextBlock Text="Confidence"
                                                    Foreground="#64748B"
                                                    FontSize="10"
                                                    FontWeight="Bold"
                                                    TextAlignment="Right" />
-                                        <TextBlock Text="{Binding RestockConfidenceText, Mode=OneWay}"
+                                        <TextBlock Text="{Binding RestockConfidenceLabelText, Mode=OneWay}"
                                                    Foreground="#E9D5FF"
-                                                   FontSize="13"
+                                                   FontSize="12"
                                                    FontWeight="SemiBold"
-                                                   TextAlignment="Right" />
-                                        <TextBlock Text="{Binding StockoutConfidenceText, Mode=OneWay}"
+                                                   TextAlignment="Right"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding StockoutConfidenceLabelText, Mode=OneWay}"
                                                    Foreground="#CBD5E1"
                                                    FontSize="11"
                                                    FontWeight="SemiBold"
-                                                   TextAlignment="Right" />
+                                                   TextAlignment="Right"
+                                                   TextTrimming="CharacterEllipsis" />
                                       </StackPanel>
                                     </Grid>
 
@@ -748,24 +753,386 @@
       </TabItem>
 
       <TabItem Header="Travel Planner">
-        <Border Margin="0,14,0,0"
-                Background="#111827"
-                BorderBrush="#243044"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="24">
-          <StackPanel>
-            <TextBlock Text="Travel Planner"
-                       Foreground="#F8FAFC"
-                       FontSize="20"
-                       FontWeight="SemiBold" />
-            <TextBlock Text="This workspace is ready for the next planning features."
-                       Margin="0,8,0,0"
-                       Foreground="#94A3B8"
-                       FontSize="13"
-                       FontWeight="SemiBold" />
-          </StackPanel>
-        </Border>
+        <Grid Margin="0,14,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0"
+                  Background="#111827"
+                  BorderBrush="#243044"
+                  BorderThickness="1"
+                  CornerRadius="8"
+                  Padding="16"
+                  Margin="0,0,0,14">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+
+              <StackPanel>
+                <TextBlock Text="Travel Planner"
+                           Foreground="#F8FAFC"
+                           FontSize="20"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="PlannerBarsText"
+                           Text="Energy/nerve unavailable"
+                           Margin="0,6,0,0"
+                           Foreground="#94A3B8"
+                           FontSize="13"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="PlannerForecastText"
+                           Text="Forecast unavailable"
+                           Margin="0,4,0,0"
+                           Foreground="#CBD5E1"
+                           FontSize="12"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="PlannerWindowSummaryText"
+                           Text="Set an active play window to build a session route."
+                           Margin="0,4,0,0"
+                           Foreground="#5EEAD4"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           TextWrapping="Wrap" />
+                <WrapPanel Margin="0,12,0,0">
+                  <StackPanel Margin="0,0,12,8">
+                    <TextBlock Text="Target item"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="Bold" />
+                    <TextBox x:Name="PlannerTargetItemBox"
+                             Width="180"
+                             Height="32"
+                             Margin="0,6,0,0"
+                             Background="#0B1120"
+                             BorderBrush="#334155"
+                             BorderThickness="1"
+                             Foreground="#F8FAFC"
+                             Padding="10,5"
+                             TextChanged="PlannerFilter_Changed" />
+                  </StackPanel>
+
+                  <StackPanel Margin="0,0,12,8">
+                    <TextBlock Text="Exclude items"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="Bold" />
+                    <TextBox x:Name="PlannerExcludedItemsBox"
+                             Width="220"
+                             Height="32"
+                             Margin="0,6,0,0"
+                             Background="#0B1120"
+                             BorderBrush="#334155"
+                             BorderThickness="1"
+                             Foreground="#F8FAFC"
+                             Padding="10,5"
+                             TextChanged="PlannerFilter_Changed" />
+                  </StackPanel>
+
+                  <StackPanel MaxWidth="620"
+                              Margin="0,0,0,8">
+                    <TextBlock Text="Exclude countries"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="Bold" />
+                    <WrapPanel x:Name="PlannerExcludedCountryPanel"
+                               Margin="0,4,0,0">
+                      <CheckBox Content="Mexico" Tag="mex" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Cayman Islands" Tag="cay" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Canada" Tag="can" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Hawaii" Tag="haw" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="United Kingdom" Tag="uni" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Argentina" Tag="arg" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Switzerland" Tag="swi" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="Japan" Tag="jap" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="China" Tag="chi" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="UAE" Tag="uae" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                      <CheckBox Content="South Africa" Tag="sou" Checked="PlannerFilter_Changed" Unchecked="PlannerFilter_Changed" Margin="0,3,10,3" />
+                    </WrapPanel>
+                  </StackPanel>
+                </WrapPanel>
+              </StackPanel>
+
+              <WrapPanel Grid.Column="1"
+                         VerticalAlignment="Center"
+                         HorizontalAlignment="Right">
+                <StackPanel Margin="0,0,12,0">
+                  <TextBlock Text="Active from"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="Bold" />
+                  <TextBox x:Name="PlannerStartTimeBox"
+                           Width="70"
+                           Height="34"
+                           Margin="0,6,0,0"
+                           Background="#0B1120"
+                           BorderBrush="#334155"
+                           BorderThickness="1"
+                           Foreground="#F8FAFC"
+                           Padding="10,6"
+                           LostFocus="PlannerWindow_Changed"
+                           KeyDown="PlannerWindowBox_KeyDown" />
+                </StackPanel>
+
+                <StackPanel Margin="0,0,12,0">
+                  <TextBlock Text="Active until"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="Bold" />
+                  <TextBox x:Name="PlannerEndTimeBox"
+                           Width="70"
+                           Height="34"
+                           Margin="0,6,0,0"
+                           Background="#0B1120"
+                           BorderBrush="#334155"
+                           BorderThickness="1"
+                           Foreground="#F8FAFC"
+                           Padding="10,6"
+                           LostFocus="PlannerWindow_Changed"
+                           KeyDown="PlannerWindowBox_KeyDown" />
+                </StackPanel>
+
+                <StackPanel Margin="0,0,12,0">
+                  <TextBlock Text="Strategy"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="Bold" />
+                  <ComboBox x:Name="PlannerStrategyBox"
+                            Width="132"
+                            Height="34"
+                            Margin="0,6,0,0">
+                    <ComboBoxItem Content="Conservative" Tag="Conservative" />
+                    <ComboBoxItem Content="Balanced" Tag="Balanced" />
+                    <ComboBoxItem Content="Aggressive" Tag="Aggressive" />
+                  </ComboBox>
+                </StackPanel>
+
+                <Button MinWidth="94"
+                        Height="34"
+                        Margin="0,20,0,0"
+                        Click="PlannerUseNowButton_Click"
+                        Content="Start now" />
+              </WrapPanel>
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="TravelPlannerCards">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Width="332"
+                          MinHeight="392"
+                          Background="#111827"
+                          BorderBrush="#243044"
+                          BorderThickness="1"
+                          CornerRadius="8"
+                          Padding="16"
+                          Margin="0,0,12,12">
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                      </Grid.RowDefinitions>
+
+                      <StackPanel>
+                        <TextBlock Text="{Binding Title, Mode=OneWay}"
+                                   Foreground="#5EEAD4"
+                                   FontSize="12"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="{Binding DestinationText, Mode=OneWay}"
+                                   Foreground="#F8FAFC"
+                                   FontSize="20"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0" />
+                        <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                                   Foreground="#CBD5E1"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,0" />
+                      </StackPanel>
+
+                      <Border Grid.Row="1"
+                              Background="#172033"
+                              BorderBrush="#263448"
+                              BorderThickness="1"
+                              CornerRadius="6"
+                              Padding="10"
+                              Margin="0,14,0,0">
+                        <StackPanel>
+                          <TextBlock Text="{Binding TripType, Mode=OneWay}"
+                                     Foreground="#C4B5FD"
+                                     FontSize="13"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding TimingSourceText, Mode=OneWay}"
+                                     Foreground="#5EEAD4"
+                                     FontSize="11"
+                                     FontWeight="Bold"
+                                     TextWrapping="Wrap"
+                                     Margin="0,4,0,0" />
+                          <TextBlock Text="{Binding WasteText, Mode=OneWay}"
+                                     Foreground="#FACC15"
+                                     FontSize="12"
+                                     FontWeight="SemiBold"
+                                     TextWrapping="Wrap"
+                                     Margin="0,4,0,0" />
+                          <TextBlock Text="{Binding Reason, Mode=OneWay}"
+                                     Foreground="#94A3B8"
+                                     FontSize="12"
+                                     FontWeight="SemiBold"
+                                     TextWrapping="Wrap"
+                                     Margin="0,4,0,0" />
+                        </StackPanel>
+                      </Border>
+
+                      <Grid Grid.Row="2" Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Depart"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding DepartText, Mode=OneWay}"
+                                     Foreground="#93C5FD"
+                                     FontSize="14"
+                                     FontWeight="Bold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                          <TextBlock Text="Arrive"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding ArriveText, Mode=OneWay}"
+                                     Foreground="#CBD5E1"
+                                     FontSize="14"
+                                     FontWeight="SemiBold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Margin="10,0,0,0">
+                          <TextBlock Text="Return"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding ReturnText, Mode=OneWay}"
+                                     Foreground="#CBD5E1"
+                                     FontSize="14"
+                                     FontWeight="SemiBold" />
+                        </StackPanel>
+                      </Grid>
+
+                      <Grid Grid.Row="3" Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Profit / h"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding ProfitPerHourDollarText, Mode=OneWay}"
+                                     Foreground="#FDBA74"
+                                     FontSize="18"
+                                     FontWeight="Bold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1"
+                                    HorizontalAlignment="Right">
+                          <TextBlock Text="Profit"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold"
+                                     TextAlignment="Right" />
+                          <TextBlock Text="{Binding ProfitDollarText, Mode=OneWay}"
+                                     Foreground="#FACC15"
+                                     FontSize="18"
+                                     FontWeight="Bold"
+                                     TextAlignment="Right" />
+                        </StackPanel>
+                      </Grid>
+
+                      <Grid Grid.Row="4" Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Cash needed"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding CashNeededDollarText, Mode=OneWay}"
+                                     Foreground="#A7F3D0"
+                                     FontSize="14"
+                                     FontWeight="Bold" />
+                          <TextBlock Text="{Binding CashStatusText, Mode=OneWay}"
+                                     Foreground="#94A3B8"
+                                     FontSize="11"
+                                     FontWeight="SemiBold"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1"
+                                    HorizontalAlignment="Right">
+                          <TextBlock Text="Buy / Stock"
+                                     Foreground="#64748B"
+                                     FontSize="10"
+                                     FontWeight="Bold"
+                                     TextAlignment="Right" />
+                          <TextBlock Foreground="#CBD5E1"
+                                     FontSize="14"
+                                     FontWeight="SemiBold"
+                                     TextAlignment="Right">
+                            <Run Text="{Binding BuyAmountText, Mode=OneWay}" />
+                            <Run Text=" / " />
+                            <Run Text="{Binding StockText, Mode=OneWay}" />
+                          </TextBlock>
+                          <TextBlock Text="{Binding TimeAwayText, Mode=OneWay, StringFormat=Away {0}}"
+                                     Foreground="#94A3B8"
+                                     FontSize="11"
+                                     FontWeight="SemiBold"
+                                     TextAlignment="Right" />
+                        </StackPanel>
+                      </Grid>
+
+                      <StackPanel Grid.Row="5" Margin="0,14,0,0">
+                        <TextBlock Text="{Binding RestockText, Mode=OneWay}"
+                                   Foreground="#C4B5FD"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding StockoutText, Mode=OneWay}"
+                                   Foreground="#FCA5A5"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding ConfidenceText, Mode=OneWay}"
+                                   Foreground="#CBD5E1"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
       </TabItem>
 
       <TabItem Header="Settings">

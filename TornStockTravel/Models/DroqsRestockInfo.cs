@@ -44,15 +44,13 @@ public sealed record DroqsRestockInfo(
             return "-";
         }
 
-        string modeText = mode == RestockAvailabilityMode.Median ? "median" : "safe";
+        string modeText = mode == RestockAvailabilityMode.Median ? "Median stock window" : "Safe stock window";
         string confidenceText = string.IsNullOrWhiteSpace(AvailabilityConfidence)
             ? string.Empty
-            : $" ({AvailabilityConfidence})";
+            : $" ({AvailabilityConfidence} confidence)";
 
-        return $"{modeText} {FormatMinutes(minutes.Value)}{confidenceText}";
+        return $"{modeText}: {FormatMinutes(minutes.Value)}{confidenceText}";
     }
-
-    public string StockoutEstimateText => StockoutAtTct ?? "-";
 
     public string StockoutConfidenceText => StockoutConfidence ?? "-";
 
