@@ -13,6 +13,7 @@ public sealed record TravelItem(
     int OwnedAmount,
     TimeSpan? FlightDuration,
     int BuyCapacity,
+    RestockAvailabilityMode AvailabilityMode,
     DroqsRestockInfo? RestockInfo)
 {
     public decimal? EffectiveValue => BazaarPrice ?? MarketValue;
@@ -31,11 +32,23 @@ public sealed record TravelItem(
 
     public TimeSpan? RoundTripDuration => FlightDuration is null ? null : FlightDuration.Value * 2;
 
-    public DateTimeOffset? RestockEstimateUtc => ParseTornCityTime(RestockInfo?.EstimatedAtTct);
+    public DateTimeOffset? RestockEstimateUtc => RestockInfo?.EstimatedAtUtc ?? ParseTornCityTime(RestockInfo?.EstimatedAtTct);
+
+    public DateTimeOffset? StockoutEstimateUtc => RestockInfo?.StockoutAtUtc;
+
+    public TimeSpan RestockArrivalLeadTime => TimeSpan.FromMinutes(2);
+
+    public TimeSpan? RestockAvailabilityDuration => RestockInfo?.GetAvailabilityDuration(AvailabilityMode);
+
+    public DateTimeOffset? RestockWindowStartUtc => RestockEstimateUtc?.Subtract(RestockArrivalLeadTime);
+
+    public DateTimeOffset? RestockWindowEndUtc => RestockEstimateUtc is null
+        ? null
+        : RestockEstimateUtc.Value.Add(RestockAvailabilityDuration ?? RestockArrivalLeadTime);
 
     public DateTimeOffset? LatestDepartureUtc => RestockEstimateUtc is null || FlightDuration is null
         ? null
-        : RestockEstimateUtc.Value.AddMinutes(2).Subtract(FlightDuration.Value);
+        : RestockWindowEndUtc?.Subtract(FlightDuration.Value);
 
     public bool IsDepartureTooLate => LatestDepartureUtc is not null
         && LatestDepartureUtc.Value < DateTimeOffset.UtcNow.AddMinutes(-30);
@@ -70,7 +83,15 @@ public sealed record TravelItem(
 
     public string RestockWindowText => RestockEstimateUtc is null
         ? "-"
-        : $"{RestockEstimateUtc.Value.AddMinutes(-2):HH:mm}-{RestockEstimateUtc.Value.AddMinutes(2):HH:mm} TCT";
+        : $"{RestockWindowStartUtc!.Value:HH:mm}-{RestockWindowEndUtc!.Value:HH:mm} TCT";
+
+    public string RestockAvailabilityText => RestockInfo?.GetAvailabilityLabel(AvailabilityMode) ?? "-";
+
+    public string StockoutEstimateText => StockoutEstimateUtc is null
+        ? "-"
+        : $"{StockoutEstimateUtc.Value:HH:mm} TCT";
+
+    public string StockoutConfidenceText => RestockInfo?.StockoutConfidenceText ?? "-";
 
     public string LatestDepartureLocalText => LatestDepartureUtc is null
         ? "-"

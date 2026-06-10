@@ -31,6 +31,8 @@ public partial class MainWindow : Window
             : string.Empty;
         RefreshIntervalBox.Text = _settings.RefreshIntervalMinutes.ToString("N0");
         MaxSpendPercentBox.Text = _settings.MaxSpendPercent.ToString("N0");
+        SelectRestockAvailabilityMode(_settings.RestockAvailabilityMode);
+        RestockAvailabilityModeBox.SelectionChanged += RestockAvailabilityModeBox_SelectionChanged;
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.TornApiKey)
             ? "No key saved"
             : "Key saved";
@@ -39,6 +41,7 @@ public partial class MainWindow : Window
             _settings.TornApiKey,
             _settings.BazaarPrices,
             _settings.BuyCapacity,
+            _settings.RestockAvailabilityMode,
             TimeSpan.FromMinutes(_settings.RefreshIntervalMinutes));
         _travelRefreshService.StateChanged += OnTravelStateChanged;
         _countdownTimer = new DispatcherTimer
@@ -66,6 +69,7 @@ public partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _travelRefreshService.StateChanged -= OnTravelStateChanged;
+        RestockAvailabilityModeBox.SelectionChanged -= RestockAvailabilityModeBox_SelectionChanged;
         _countdownTimer.Stop();
         _countdownTimer.Tick -= CountdownTimer_Tick;
         _errorToastTimer.Stop();
@@ -118,6 +122,25 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         MaxSpendPercentBox.Text = percent.ToString("N0");
         UpdateRecommendation();
+    }
+
+    private async void RestockAvailabilityModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        RestockAvailabilityMode mode = GetSelectedRestockAvailabilityMode();
+        if (_settings.RestockAvailabilityMode == mode)
+        {
+            return;
+        }
+
+        _settings = _settings with
+        {
+            RestockAvailabilityMode = mode
+        };
+        _settingsService.Save(_settings);
+        _travelRefreshService.SetRestockAvailabilityMode(mode);
+        UpdateRecommendation();
+
+        await _travelRefreshService.RefreshNowAsync();
     }
 
     private async void SaveBuyCapacityButton_Click(object sender, RoutedEventArgs e)
@@ -325,6 +348,7 @@ public partial class MainWindow : Window
             _travelStatus,
             _moneyStatus,
             _settings.MaxSpendPercent,
+            _settings.RestockAvailabilityMode,
             DateTimeOffset.Now);
 
         if (recommendation is null)
@@ -449,6 +473,34 @@ public partial class MainWindow : Window
 
         return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.CurrentCulture, out parsed)
             || decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out parsed);
+    }
+
+    private void SelectRestockAvailabilityMode(RestockAvailabilityMode mode)
+    {
+        foreach (ComboBoxItem item in RestockAvailabilityModeBox.Items.OfType<ComboBoxItem>())
+        {
+            if (item.Tag is string tag
+                && Enum.TryParse(tag, ignoreCase: true, out RestockAvailabilityMode itemMode)
+                && itemMode == mode)
+            {
+                RestockAvailabilityModeBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        RestockAvailabilityModeBox.SelectedIndex = 0;
+    }
+
+    private RestockAvailabilityMode GetSelectedRestockAvailabilityMode()
+    {
+        if (RestockAvailabilityModeBox.SelectedItem is ComboBoxItem item
+            && item.Tag is string tag
+            && Enum.TryParse(tag, ignoreCase: true, out RestockAvailabilityMode mode))
+        {
+            return mode;
+        }
+
+        return AppSettings.DefaultRestockAvailabilityMode;
     }
 
 }

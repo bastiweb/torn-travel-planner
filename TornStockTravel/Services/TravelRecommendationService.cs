@@ -10,6 +10,7 @@ public static class TravelRecommendationService
         TornTravelStatus? travelStatus,
         TornMoneyStatus? moneyStatus,
         int maxSpendPercent,
+        RestockAvailabilityMode availabilityMode,
         DateTimeOffset now)
     {
         DateTimeOffset readyAt = GetNextTornAvailability(travelStatus, now);
@@ -20,7 +21,7 @@ public static class TravelRecommendationService
             : moneyStatus.Total * maxSpendPercent / 100m;
 
         return destinations
-            .SelectMany(destination => destination.Items.Select(item => BuildCandidate(destination, item, readyAt, wallet, vault, spendLimit, maxSpendPercent)))
+            .SelectMany(destination => destination.Items.Select(item => BuildCandidate(destination, item, readyAt, wallet, vault, spendLimit, maxSpendPercent, availabilityMode)))
             .Where(candidate => candidate is not null)
             .Select(candidate => candidate!)
             .OrderByDescending(candidate => candidate.ProfitPerHour)
@@ -36,7 +37,8 @@ public static class TravelRecommendationService
         decimal? wallet,
         decimal? vault,
         decimal? spendLimit,
-        int maxSpendPercent)
+        int maxSpendPercent,
+        RestockAvailabilityMode availabilityMode)
     {
         if (item.FlightDuration is null
             || item.Profit is null
@@ -58,6 +60,14 @@ public static class TravelRecommendationService
         if (item.Quantity > 0)
         {
             departAt = readyAt;
+            DateTimeOffset projectedArrival = departAt.Add(item.FlightDuration.Value);
+
+            if (item.StockoutEstimateUtc is not null
+                && projectedArrival > item.StockoutEstimateUtc.Value)
+            {
+                return null;
+            }
+
             reason = item.RestockEstimateUtc is null
                 ? "Current stock is profitable"
                 : "Current stock is profitable; restock data is available as backup";
@@ -65,7 +75,8 @@ public static class TravelRecommendationService
         else if (item.RestockEstimateUtc is not null)
         {
             DateTimeOffset targetArrival = item.RestockEstimateUtc.Value.Subtract(RestockWindowTolerance);
-            DateTimeOffset latestDeparture = item.RestockEstimateUtc.Value.Add(RestockWindowTolerance).Subtract(item.FlightDuration.Value);
+            DateTimeOffset latestArrival = item.RestockWindowEndUtc ?? item.RestockEstimateUtc.Value.Add(RestockWindowTolerance);
+            DateTimeOffset latestDeparture = latestArrival.Subtract(item.FlightDuration.Value);
 
             if (readyAt > latestDeparture)
             {
@@ -73,7 +84,9 @@ public static class TravelRecommendationService
             }
 
             departAt = Max(readyAt, targetArrival.Subtract(item.FlightDuration.Value));
-            reason = "Restock timing fits your next Torn availability";
+            reason = item.RestockAvailabilityDuration is null
+                ? "Restock timing fits your next Torn availability"
+                : $"Restock timing fits the {FormatAvailabilityMode(availabilityMode)} availability window";
         }
         else
         {
@@ -124,5 +137,10 @@ public static class TravelRecommendationService
     private static DateTimeOffset Max(DateTimeOffset first, DateTimeOffset second)
     {
         return first >= second ? first : second;
+    }
+
+    private static string FormatAvailabilityMode(RestockAvailabilityMode mode)
+    {
+        return mode == RestockAvailabilityMode.Median ? "median" : "conservative";
     }
 }

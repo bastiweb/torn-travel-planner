@@ -32,6 +32,7 @@ public static class TravelDashboardParser
         IReadOnlyDictionary<int, TornInventoryItem>? inventory = null,
         IReadOnlyDictionary<int, decimal>? bazaarPrices = null,
         int buyCapacity = 0,
+        RestockAvailabilityMode availabilityMode = RestockAvailabilityMode.Conservative,
         IReadOnlyDictionary<string, DroqsRestockInfo>? restocks = null)
     {
         if (data.ValueKind == JsonValueKind.Object
@@ -62,6 +63,7 @@ public static class TravelDashboardParser
                 bazaarPrices,
                 flightDuration,
                 buyCapacity,
+                availabilityMode,
                 restocks,
                 code);
 
@@ -92,6 +94,7 @@ public static class TravelDashboardParser
         IReadOnlyDictionary<int, decimal>? bazaarPrices,
         TimeSpan? flightDuration,
         int buyCapacity,
+        RestockAvailabilityMode availabilityMode,
         IReadOnlyDictionary<string, DroqsRestockInfo>? restocks,
         string destinationCode)
     {
@@ -101,25 +104,25 @@ public static class TravelDashboardParser
         {
             foreach (JsonElement itemElement in value.EnumerateArray())
             {
-                AddItem(items, itemElement, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, restocks, destinationCode);
+                AddItem(items, itemElement, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, availabilityMode, restocks, destinationCode);
             }
         }
         else if (value.ValueKind == JsonValueKind.Object)
         {
             if (TryGetProperty(value, "stocks", out JsonElement nestedStocks))
             {
-                return ParseItems(nestedStocks, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, restocks, destinationCode);
+                return ParseItems(nestedStocks, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, availabilityMode, restocks, destinationCode);
             }
 
             if (LooksLikeItem(value))
             {
-                AddItem(items, value, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, restocks, destinationCode);
+                AddItem(items, value, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, availabilityMode, restocks, destinationCode);
             }
             else
             {
                 foreach (JsonProperty itemProperty in value.EnumerateObject())
                 {
-                    AddItem(items, itemProperty.Value, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, restocks, destinationCode);
+                    AddItem(items, itemProperty.Value, itemDetails, inventory, bazaarPrices, flightDuration, buyCapacity, availabilityMode, restocks, destinationCode);
                 }
             }
         }
@@ -142,6 +145,7 @@ public static class TravelDashboardParser
         IReadOnlyDictionary<int, decimal>? bazaarPrices,
         TimeSpan? flightDuration,
         int buyCapacity,
+        RestockAvailabilityMode availabilityMode,
         IReadOnlyDictionary<string, DroqsRestockInfo>? restocks,
         string destinationCode)
     {
@@ -198,6 +202,7 @@ public static class TravelDashboardParser
             inventoryItem?.Amount ?? 0,
             flightDuration,
             buyCapacity,
+            availabilityMode,
             restockInfo));
     }
 

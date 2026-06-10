@@ -34,13 +34,15 @@ public sealed class AppSettingsService
                 storedSettings?.RefreshIntervalMinutes ?? AppSettings.DefaultRefreshIntervalMinutes);
             int maxSpendPercent = NormalizeMaxSpendPercent(
                 storedSettings?.MaxSpendPercent ?? AppSettings.DefaultMaxSpendPercent);
+            RestockAvailabilityMode availabilityMode = NormalizeAvailabilityMode(
+                storedSettings?.RestockAvailabilityMode);
 
             if (!string.IsNullOrWhiteSpace(storedSettings?.ProtectedTornApiKey))
             {
-                return new AppSettings(Unprotect(storedSettings.ProtectedTornApiKey), bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent);
+                return new AppSettings(Unprotect(storedSettings.ProtectedTornApiKey), bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent, availabilityMode);
             }
 
-            return new AppSettings(storedSettings?.TornApiKey ?? string.Empty, bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent);
+            return new AppSettings(storedSettings?.TornApiKey ?? string.Empty, bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent, availabilityMode);
         }
         catch
         {
@@ -56,7 +58,8 @@ public sealed class AppSettingsService
             settings.BazaarPrices.ToDictionary(entry => entry.Key, entry => entry.Value),
             settings.BuyCapacity,
             settings.RefreshIntervalMinutes,
-            settings.MaxSpendPercent);
+            settings.MaxSpendPercent,
+            settings.RestockAvailabilityMode.ToString());
         string json = JsonSerializer.Serialize(storedSettings, JsonOptions.Pretty);
         File.WriteAllText(_settingsPath, json);
     }
@@ -89,6 +92,13 @@ public sealed class AppSettingsService
     {
         return Math.Clamp(percent, AppSettings.MinimumMaxSpendPercent, AppSettings.MaximumMaxSpendPercent);
     }
+
+    private static RestockAvailabilityMode NormalizeAvailabilityMode(string? mode)
+    {
+        return Enum.TryParse(mode, ignoreCase: true, out RestockAvailabilityMode parsed)
+            ? parsed
+            : AppSettings.DefaultRestockAvailabilityMode;
+    }
 }
 
 public sealed record AppSettings(
@@ -96,7 +106,8 @@ public sealed record AppSettings(
     IReadOnlyDictionary<int, decimal> BazaarPrices,
     int BuyCapacity,
     int RefreshIntervalMinutes,
-    int MaxSpendPercent)
+    int MaxSpendPercent,
+    RestockAvailabilityMode RestockAvailabilityMode)
 {
     public const int DefaultRefreshIntervalMinutes = 5;
     public const int MinimumRefreshIntervalMinutes = 1;
@@ -104,9 +115,10 @@ public sealed record AppSettings(
     public const int DefaultMaxSpendPercent = 50;
     public const int MinimumMaxSpendPercent = 1;
     public const int MaximumMaxSpendPercent = 100;
+    public const RestockAvailabilityMode DefaultRestockAvailabilityMode = RestockAvailabilityMode.Conservative;
 
     public AppSettings(string TornApiKey)
-        : this(TornApiKey, new Dictionary<int, decimal>(), 0, DefaultRefreshIntervalMinutes, DefaultMaxSpendPercent)
+        : this(TornApiKey, new Dictionary<int, decimal>(), 0, DefaultRefreshIntervalMinutes, DefaultMaxSpendPercent, DefaultRestockAvailabilityMode)
     {
     }
 }
@@ -117,4 +129,5 @@ internal sealed record StoredSettings(
     Dictionary<int, decimal>? BazaarPrices,
     int? BuyCapacity,
     int? RefreshIntervalMinutes,
-    int? MaxSpendPercent);
+    int? MaxSpendPercent,
+    string? RestockAvailabilityMode);

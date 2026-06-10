@@ -18,6 +18,7 @@ public sealed class TravelRefreshService : IDisposable
     private string _tornApiKey;
     private IReadOnlyDictionary<int, decimal> _bazaarPrices;
     private int _buyCapacity;
+    private RestockAvailabilityMode _availabilityMode;
     private TimeSpan _refreshInterval;
     private bool _isRefreshing;
     private TravelRefreshState _state;
@@ -28,6 +29,7 @@ public sealed class TravelRefreshService : IDisposable
         string tornApiKey = "",
         IReadOnlyDictionary<int, decimal>? bazaarPrices = null,
         int buyCapacity = 0,
+        RestockAvailabilityMode availabilityMode = RestockAvailabilityMode.Conservative,
         TimeSpan? refreshInterval = null)
     {
         _client = new YataTravelClient();
@@ -39,6 +41,7 @@ public sealed class TravelRefreshService : IDisposable
         _tornApiKey = tornApiKey;
         _bazaarPrices = bazaarPrices ?? new Dictionary<int, decimal>();
         _buyCapacity = buyCapacity;
+        _availabilityMode = availabilityMode;
         _refreshInterval = NormalizeRefreshInterval(refreshInterval ?? DefaultRefreshInterval);
         _timer = new DispatcherTimer
         {
@@ -89,6 +92,11 @@ public sealed class TravelRefreshService : IDisposable
     public void SetBuyCapacity(int buyCapacity)
     {
         _buyCapacity = buyCapacity;
+    }
+
+    public void SetRestockAvailabilityMode(RestockAvailabilityMode availabilityMode)
+    {
+        _availabilityMode = availabilityMode;
     }
 
     public void SetRefreshInterval(TimeSpan refreshInterval)
@@ -165,7 +173,7 @@ public sealed class TravelRefreshService : IDisposable
             TornMoneyStatus? moneyStatus = await moneyStatusTask;
             IReadOnlyDictionary<string, DroqsRestockInfo> restocks = await restocksTask;
             IReadOnlyList<TravelDestination> destinations =
-                TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, restocks);
+                TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, _availabilityMode, restocks);
 
             PatchState(_state with
             {
