@@ -1,0 +1,39 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Visual Studio / Rider / VS Code local state
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET generated files
+TestResults/
+*.nupkg
+*.snupkg
+*.pdb
+
+# Local app data / secrets
+settings.json
+appsettings*.json
+*.secret
+*.secrets
+*.key
+*.pem
+*.pfx
+*.crt
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+
+# OS files
+Thumbs.db
+Desktop.ini

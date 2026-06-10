@@ -1,0 +1,128 @@
+namespace TornStockTravel.Services;
+
+public static class TravelRecommendationService
+{
+    private static readonly TimeSpan LocalStayDuration = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RestockWindowTolerance = TimeSpan.FromMinutes(2);
+
+    public static TravelRecommendation? GetRecommendation(
+        IReadOnlyList<TravelDestination> destinations,
+        TornTravelStatus? travelStatus,
+        TornMoneyStatus? moneyStatus,
+        int maxSpendPercent,
+        DateTimeOffset now)
+    {
+        DateTimeOffset readyAt = GetNextTornAvailability(travelStatus, now);
+        decimal? wallet = moneyStatus?.Wallet;
+        decimal? vault = moneyStatus?.Vault;
+        decimal? spendLimit = moneyStatus is null
+            ? null
+            : moneyStatus.Total * maxSpendPercent / 100m;
+
+        return destinations
+            .SelectMany(destination => destination.Items.Select(item => BuildCandidate(destination, item, readyAt, wallet, vault, spendLimit, maxSpendPercent)))
+            .Where(candidate => candidate is not null)
+            .Select(candidate => candidate!)
+            .OrderByDescending(candidate => candidate.ProfitPerHour)
+            .ThenByDescending(candidate => candidate.Profit)
+            .ThenBy(candidate => candidate.DepartAt)
+            .FirstOrDefault();
+    }
+
+    private static TravelRecommendation? BuildCandidate(
+        TravelDestination destination,
+        TravelItem item,
+        DateTimeOffset readyAt,
+        decimal? wallet,
+        decimal? vault,
+        decimal? spendLimit,
+        int maxSpendPercent)
+    {
+        if (item.FlightDuration is null
+            || item.Profit is null
+            || item.ProfitPerHour is null
+            || item.Profit <= 0
+            || item.ProfitPerHour <= 0)
+        {
+            return null;
+        }
+
+        if (spendLimit is not null && item.CashNeeded > spendLimit.Value)
+        {
+            return null;
+        }
+
+        DateTimeOffset departAt;
+        string reason;
+
+        if (item.Quantity > 0)
+        {
+            departAt = readyAt;
+            reason = item.RestockEstimateUtc is null
+                ? "Current stock is profitable"
+                : "Current stock is profitable; restock data is available as backup";
+        }
+        else if (item.RestockEstimateUtc is not null)
+        {
+            DateTimeOffset targetArrival = item.RestockEstimateUtc.Value.Subtract(RestockWindowTolerance);
+            DateTimeOffset latestDeparture = item.RestockEstimateUtc.Value.Add(RestockWindowTolerance).Subtract(item.FlightDuration.Value);
+
+            if (readyAt > latestDeparture)
+            {
+                return null;
+            }
+
+            departAt = Max(readyAt, targetArrival.Subtract(item.FlightDuration.Value));
+            reason = "Restock timing fits your next Torn availability";
+        }
+        else
+        {
+            return null;
+        }
+
+        DateTimeOffset arriveAt = departAt.Add(item.FlightDuration.Value);
+
+        return new TravelRecommendation(
+            destination.Name,
+            destination.Code,
+            item.Name,
+            readyAt,
+            departAt,
+            arriveAt,
+            item.Profit.Value,
+            item.ProfitPerHour.Value,
+            item.CashNeeded,
+            wallet,
+            vault,
+            maxSpendPercent,
+            reason);
+    }
+
+    private static DateTimeOffset GetNextTornAvailability(TornTravelStatus? travelStatus, DateTimeOffset now)
+    {
+        if (travelStatus is null || !travelStatus.IsTraveling)
+        {
+            return now;
+        }
+
+        DateTimeOffset arrivalAt = travelStatus.ArrivalAt ?? now.Add(travelStatus.GetRemaining(now) ?? TimeSpan.Zero);
+
+        if (TravelFlightTimes.IsTornDestination(travelStatus.Destination))
+        {
+            return arrivalAt;
+        }
+
+        TimeSpan? returnFlightDuration = travelStatus.Destination is null
+            ? null
+            : TravelFlightTimes.GetFlightDuration(travelStatus.Destination);
+
+        return returnFlightDuration is null
+            ? arrivalAt
+            : arrivalAt.Add(LocalStayDuration).Add(returnFlightDuration.Value);
+    }
+
+    private static DateTimeOffset Max(DateTimeOffset first, DateTimeOffset second)
+    {
+        return first >= second ? first : second;
+    }
+}
