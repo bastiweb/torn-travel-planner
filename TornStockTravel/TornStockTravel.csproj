@@ -7,5 +7,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TornStockTravel</AssemblyName>
     <RootNamespace>TornStockTravel</RootNamespace>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+  </ItemGroup>
 </Project>

@@ -6,6 +6,7 @@
         Height="720"
         MinWidth="760"
         MinHeight="520"
+        Icon="Assets/AppIcon.ico"
         WindowState="Maximized"
         Background="#0B1120">
   <Grid>
