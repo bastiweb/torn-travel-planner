@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title = BuildWindowTitle();
 
         _settingsService = new AppSettingsService();
         _updateCheckerService = new UpdateCheckerService();
@@ -644,6 +645,18 @@ public partial class MainWindow : Window
         return normalized.Length <= maximumLength
             ? normalized
             : $"{normalized[..maximumLength]}...";
+    }
+
+    private static string BuildWindowTitle()
+    {
+        Version version = UpdateCheckerService.GetCurrentVersion();
+        string displayVersion = version.Revision > 0
+            ? version.ToString()
+            : version.Build > 0
+                ? version.ToString(3)
+                : version.ToString(2);
+
+        return $"Torn Stock Travel (v{displayVersion})";
     }
 
     private void SelectRestockAvailabilityMode(RestockAvailabilityMode mode)

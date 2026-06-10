@@ -239,13 +239,40 @@ $ErrorActionPreference = 'Stop'
 $targetDirectory = Split-Path -Parent $TargetPath
 
 try {
+    $forceAfter = (Get-Date).AddSeconds(15)
+    $deadline = (Get-Date).AddSeconds(120)
+    $lastError = $null
+    $installed = $false
+
     try {
-        Wait-Process -Id $ProcessId -Timeout 45 -ErrorAction SilentlyContinue
+        Wait-Process -Id $ProcessId -Timeout 10 -ErrorAction SilentlyContinue
     } catch {
     }
 
-    Start-Sleep -Milliseconds 700
-    Copy-Item -LiteralPath $SourcePath -Destination $TargetPath -Force
+    while (-not $installed -and (Get-Date) -lt $deadline) {
+        try {
+            $runningProcess = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+            if ($runningProcess -and (Get-Date) -gt $forceAfter) {
+                Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 700
+            }
+
+            Copy-Item -LiteralPath $SourcePath -Destination $TargetPath -Force
+            $installed = $true
+        } catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds 750
+        }
+    }
+
+    if (-not $installed) {
+        if ($lastError) {
+            throw $lastError
+        }
+
+        throw ""The target file stayed locked for too long.""
+    }
+
     Start-Process -FilePath $TargetPath -WorkingDirectory $targetDirectory
 } catch {
     try {
