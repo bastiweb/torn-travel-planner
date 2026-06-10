@@ -13,6 +13,7 @@ public partial class MainWindow : Window
 
     private readonly AppSettingsService _settingsService;
     private readonly TravelRefreshService _travelRefreshService;
+    private readonly UpdateCheckerService _updateCheckerService;
     private readonly DispatcherTimer _countdownTimer;
     private readonly DispatcherTimer _errorToastTimer;
     private AppSettings _settings;
@@ -31,6 +32,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _settingsService = new AppSettingsService();
+        _updateCheckerService = new UpdateCheckerService();
         _settings = _settingsService.Load();
         ApiKeyBox.Password = _settings.TornApiKey;
         BuyCapacityBox.Text = _settings.BuyCapacity > 0
@@ -74,6 +76,7 @@ public partial class MainWindow : Window
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         _travelRefreshService.Start();
+        _ = CheckForUpdatesAsync();
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
@@ -86,11 +89,65 @@ public partial class MainWindow : Window
         _errorToastTimer.Stop();
         _errorToastTimer.Tick -= ErrorToastTimer_Tick;
         _travelRefreshService.Dispose();
+        _updateCheckerService.Dispose();
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         await _travelRefreshService.RefreshNowAsync();
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        GitHubUpdateInfo? updateInfo;
+        try
+        {
+            updateInfo = await _updateCheckerService.CheckForUpdateAsync(UpdateCheckerService.GetCurrentVersion());
+        }
+        catch
+        {
+            return;
+        }
+
+        if (updateInfo is null)
+        {
+            return;
+        }
+
+        string releaseNotes = FormatReleaseNotesPreview(updateInfo.Body);
+        MessageBoxResult result = MessageBox.Show(
+            this,
+            $"Version {updateInfo.TagName} is available.\n\nDownload size: {updateInfo.AssetSizeText}\n\nDownload and install now?\n\n{releaseNotes}",
+            "Update available",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            RefreshButton.IsEnabled = false;
+            StatusText.Text = "Downloading update...";
+            string downloadedExePath = await _updateCheckerService.DownloadUpdateAsync(updateInfo);
+            MessageBox.Show(
+                this,
+                "The app will close for a moment, install the update, and restart automatically.",
+                "Installing update",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            _updateCheckerService.StartUpdater(downloadedExePath);
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            RefreshButton.IsEnabled = true;
+            StatusText.Text = "Ready";
+            ShowErrorToastIfNeeded($"Update failed: {ex.Message}");
+        }
     }
 
     private void SaveRefreshIntervalButton_Click(object sender, RoutedEventArgs e)
@@ -573,6 +630,20 @@ public partial class MainWindow : Window
 
         return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.CurrentCulture, out parsed)
             || decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out parsed);
+    }
+
+    private static string FormatReleaseNotesPreview(string? releaseNotes)
+    {
+        if (string.IsNullOrWhiteSpace(releaseNotes))
+        {
+            return "No release notes provided.";
+        }
+
+        string normalized = releaseNotes.Trim();
+        const int maximumLength = 900;
+        return normalized.Length <= maximumLength
+            ? normalized
+            : $"{normalized[..maximumLength]}...";
     }
 
     private void SelectRestockAvailabilityMode(RestockAvailabilityMode mode)
