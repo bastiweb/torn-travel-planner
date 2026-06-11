@@ -14,6 +14,23 @@ dotnet run --project .\TornStockTravel\TornStockTravel.csproj
 
 The app fetches YATA, Torn, and DroqsDB API data on startup and then refreshes on the configured interval.
 
+## Discord webhook alerts
+
+Discord webhook alerts are optional. They use the same alert events as the local Windows reminders.
+
+1. In Discord, open your server settings.
+2. Go to `Integrations` > `Webhooks`.
+3. Create a new webhook, choose the target channel, and copy the webhook URL.
+4. In Torn Stock Travel, open `Settings` > `Alerts`.
+5. Paste the webhook URL into `Discord webhook URL`.
+6. Enable `Send Discord webhook`.
+7. Enable the alert types you want, such as departure, landing, nerve, or restock alerts.
+8. Click `Save`.
+
+Use `Test Discord` to send a one-off test message to the webhook URL currently entered in the field. This test does not require `Send Discord webhook` to be enabled. Use `Test Windows` to check the local Windows notification path.
+
+Webhook URLs are stored locally with Windows DPAPI protection, just like the Torn API key. Do not commit webhook URLs to GitHub.
+
 ## Build a standalone Windows app
 
 ```powershell

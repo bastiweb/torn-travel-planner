@@ -34,9 +34,14 @@ public sealed class AppSettingsService
                 storedSettings?.RefreshIntervalMinutes ?? AppSettings.DefaultRefreshIntervalMinutes);
             int maxSpendPercent = NormalizeMaxSpendPercent(
                 storedSettings?.MaxSpendPercent ?? AppSettings.DefaultMaxSpendPercent);
+            int departureReminderMinutes = NormalizeDepartureReminderMinutes(
+                storedSettings?.DepartureReminderMinutes ?? AppSettings.DefaultDepartureReminderMinutes);
             RestockAvailabilityMode availabilityMode = NormalizeAvailabilityMode(
                 storedSettings?.RestockAvailabilityMode);
             IReadOnlyList<PlannerPreset> plannerPresets = NormalizePlannerPresets(storedSettings?.PlannerPresets);
+            string discordWebhookUrl = !string.IsNullOrWhiteSpace(storedSettings?.ProtectedDiscordWebhookUrl)
+                ? Unprotect(storedSettings.ProtectedDiscordWebhookUrl)
+                : storedSettings?.DiscordWebhookUrl ?? string.Empty;
 
             if (!string.IsNullOrWhiteSpace(storedSettings?.ProtectedTornApiKey))
             {
@@ -50,7 +55,14 @@ public sealed class AppSettingsService
                     storedSettings.LastSeenVersion,
                     storedSettings.PendingReleaseVersion,
                     storedSettings.PendingReleaseNotes,
-                    plannerPresets);
+                    plannerPresets,
+                    storedSettings.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
+                    departureReminderMinutes,
+                    storedSettings.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
+                    storedSettings.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
+                    storedSettings.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
+                    storedSettings.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
+                    discordWebhookUrl);
             }
 
             return new AppSettings(
@@ -63,7 +75,14 @@ public sealed class AppSettingsService
                 storedSettings?.LastSeenVersion,
                 storedSettings?.PendingReleaseVersion,
                 storedSettings?.PendingReleaseNotes,
-                plannerPresets);
+                plannerPresets,
+                storedSettings?.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
+                departureReminderMinutes,
+                storedSettings?.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
+                storedSettings?.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
+                storedSettings?.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
+                storedSettings?.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
+                discordWebhookUrl);
         }
         catch
         {
@@ -91,7 +110,15 @@ public sealed class AppSettingsService
                 preset.ExcludedCountryCodes.ToList(),
                 preset.Strategy.ToString(),
                 preset.CarryCapacity,
-                preset.ActiveWindowHours)).ToList());
+                preset.ActiveWindowHours)).ToList(),
+            settings.DepartureRemindersEnabled,
+            settings.DepartureReminderMinutes,
+            settings.RestockAlertsEnabled,
+            settings.LandingReminderEnabled,
+            settings.NerveNearFullAlertEnabled,
+            settings.DiscordAlertsEnabled,
+            string.Empty,
+            Protect(settings.DiscordWebhookUrl));
         string json = JsonSerializer.Serialize(storedSettings, JsonOptions.Pretty);
         File.WriteAllText(_settingsPath, json);
     }
@@ -123,6 +150,11 @@ public sealed class AppSettingsService
     private static int NormalizeMaxSpendPercent(int percent)
     {
         return Math.Clamp(percent, AppSettings.MinimumMaxSpendPercent, AppSettings.MaximumMaxSpendPercent);
+    }
+
+    private static int NormalizeDepartureReminderMinutes(int minutes)
+    {
+        return Math.Clamp(minutes, AppSettings.MinimumDepartureReminderMinutes, AppSettings.MaximumDepartureReminderMinutes);
     }
 
     private static RestockAvailabilityMode NormalizeAvailabilityMode(string? mode)
@@ -185,7 +217,14 @@ public sealed record AppSettings(
     string? LastSeenVersion,
     string? PendingReleaseVersion,
     string? PendingReleaseNotes,
-    IReadOnlyList<PlannerPreset> PlannerPresets)
+    IReadOnlyList<PlannerPreset> PlannerPresets,
+    bool DepartureRemindersEnabled,
+    int DepartureReminderMinutes,
+    bool RestockAlertsEnabled,
+    bool LandingReminderEnabled,
+    bool NerveNearFullAlertEnabled,
+    bool DiscordAlertsEnabled,
+    string DiscordWebhookUrl)
 {
     public const int DefaultRefreshIntervalMinutes = 5;
     public const int MinimumRefreshIntervalMinutes = 1;
@@ -194,6 +233,14 @@ public sealed record AppSettings(
     public const int MinimumMaxSpendPercent = 1;
     public const int MaximumMaxSpendPercent = 100;
     public const RestockAvailabilityMode DefaultRestockAvailabilityMode = RestockAvailabilityMode.Conservative;
+    public const bool DefaultDepartureRemindersEnabled = false;
+    public const int DefaultDepartureReminderMinutes = 5;
+    public const int MinimumDepartureReminderMinutes = 1;
+    public const int MaximumDepartureReminderMinutes = 120;
+    public const bool DefaultRestockAlertsEnabled = false;
+    public const bool DefaultLandingReminderEnabled = false;
+    public const bool DefaultNerveNearFullAlertEnabled = false;
+    public const bool DefaultDiscordAlertsEnabled = false;
 
     public AppSettings(string TornApiKey)
         : this(
@@ -206,7 +253,14 @@ public sealed record AppSettings(
             null,
             null,
             null,
-            AppSettingsService.GetDefaultPlannerPresets())
+            AppSettingsService.GetDefaultPlannerPresets(),
+            DefaultDepartureRemindersEnabled,
+            DefaultDepartureReminderMinutes,
+            DefaultRestockAlertsEnabled,
+            DefaultLandingReminderEnabled,
+            DefaultNerveNearFullAlertEnabled,
+            DefaultDiscordAlertsEnabled,
+            string.Empty)
     {
     }
 }
@@ -222,7 +276,15 @@ internal sealed record StoredSettings(
     string? LastSeenVersion,
     string? PendingReleaseVersion,
     string? PendingReleaseNotes,
-    List<StoredPlannerPreset>? PlannerPresets);
+    List<StoredPlannerPreset>? PlannerPresets,
+    bool? DepartureRemindersEnabled,
+    int? DepartureReminderMinutes,
+    bool? RestockAlertsEnabled,
+    bool? LandingReminderEnabled,
+    bool? NerveNearFullAlertEnabled,
+    bool? DiscordAlertsEnabled,
+    string? DiscordWebhookUrl,
+    string? ProtectedDiscordWebhookUrl);
 
 internal sealed record StoredPlannerPreset(
     string? Name,

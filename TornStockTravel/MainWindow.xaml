@@ -1414,6 +1414,146 @@
                 </StackPanel>
               </Border>
 
+              <Border Background="#0B1120"
+                      BorderBrush="#243044"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="14"
+                      Margin="0,0,0,22">
+                <StackPanel>
+                  <TextBlock Text="Alerts"
+                             Foreground="#F8FAFC"
+                             FontSize="15"
+                             FontWeight="SemiBold" />
+                  <TextBlock Text="Departure reminders, restock reminders, and optional Discord webhook alerts."
+                             Margin="0,4,0,12"
+                             Foreground="#94A3B8"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,12">
+                      <CheckBox x:Name="DepartureReminderCheckBox"
+                                Content="Departure reminders"
+                                Foreground="#F8FAFC"
+                                FontWeight="SemiBold" />
+                      <TextBlock Text="Notify before the next planned trip should depart."
+                                 Margin="22,4,0,0"
+                                 Foreground="#64748B"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Margin="12,0,0,12">
+                      <TextBlock Text="Lead time in minutes"
+                                 Foreground="#94A3B8"
+                                 FontSize="11"
+                                 FontWeight="Bold" />
+                      <TextBox x:Name="DepartureReminderMinutesBox"
+                               Width="90"
+                               Height="32"
+                               Margin="0,6,0,0"
+                               HorizontalAlignment="Left"
+                               Background="#111827"
+                               BorderBrush="#334155"
+                               BorderThickness="1"
+                               Foreground="#F8FAFC"
+                               Padding="10,5" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,12,12">
+                      <CheckBox x:Name="RestockAlertCheckBox"
+                                Content="Restock / forecast alerts"
+                                Foreground="#F8FAFC"
+                                FontWeight="SemiBold" />
+                      <TextBlock Text="Highlight planned departures that depend on restock or forecast timing."
+                                 Margin="22,4,0,0"
+                                 Foreground="#64748B"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Margin="12,0,0,12">
+                      <CheckBox x:Name="DiscordAlertCheckBox"
+                                Content="Send Discord webhook"
+                                Foreground="#F8FAFC"
+                                FontWeight="SemiBold" />
+                      <TextBlock Text="Uses the same alerts as desktop reminders."
+                                 Margin="22,4,0,0"
+                                 Foreground="#64748B"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,12,12">
+                      <CheckBox x:Name="LandingReminderCheckBox"
+                                Content="Landing reminder"
+                                Foreground="#F8FAFC"
+                                FontWeight="SemiBold" />
+                      <TextBlock Text="Notify when your current flight has about 1 minute left."
+                                 Margin="22,4,0,0"
+                                 Foreground="#64748B"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Margin="12,0,0,12">
+                      <CheckBox x:Name="NerveNearFullAlertCheckBox"
+                                Content="Nerve near full"
+                                Foreground="#F8FAFC"
+                                FontWeight="SemiBold" />
+                      <TextBlock Text="Notify when 5 or fewer nerve points are missing."
+                                 Margin="22,4,0,0"
+                                 Foreground="#64748B"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <TextBlock Text="Discord webhook URL"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="Bold" />
+                  <PasswordBox x:Name="DiscordWebhookBox"
+                               Height="34"
+                               Margin="0,6,0,12"
+                               Background="#111827"
+                               BorderBrush="#334155"
+                               BorderThickness="1"
+                               Foreground="#F8FAFC"
+                               PasswordChar="*"
+                               Padding="10,6" />
+
+                  <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right"
+                            MinWidth="92"
+                            Height="34"
+                            Margin="10,0,0,0"
+                            Click="TestAlertButton_Click"
+                            Content="Test Windows" />
+                    <Button DockPanel.Dock="Right"
+                            MinWidth="92"
+                            Height="34"
+                            Margin="10,0,0,0"
+                            Click="TestDiscordButton_Click"
+                            Content="Test Discord" />
+                    <Button DockPanel.Dock="Right"
+                            MinWidth="92"
+                            Height="34"
+                            Margin="10,0,0,0"
+                            Click="SaveAlertSettingsButton_Click"
+                            Content="Save" />
+                    <TextBlock x:Name="AlertSettingsStatusText"
+                               VerticalAlignment="Center"
+                               Foreground="#5EEAD4"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap" />
+                  </DockPanel>
+                </StackPanel>
+              </Border>
+
               <TextBlock Text="Torn API Key"
                          Foreground="#94A3B8"
                          FontSize="12"

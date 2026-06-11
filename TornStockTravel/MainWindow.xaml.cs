@@ -4,6 +4,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using TornStockTravel.Services;
+using WpfButton = System.Windows.Controls.Button;
+using WpfCheckBox = System.Windows.Controls.CheckBox;
+using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
+using WpfMessageBox = System.Windows.MessageBox;
+using WpfTextBox = System.Windows.Controls.TextBox;
 
 namespace TornStockTravel;
 
@@ -14,8 +19,11 @@ public partial class MainWindow : Window
     private readonly AppSettingsService _settingsService;
     private readonly TravelRefreshService _travelRefreshService;
     private readonly UpdateCheckerService _updateCheckerService;
+    private readonly DesktopNotificationService _notificationService;
+    private readonly DiscordWebhookService _discordWebhookService;
     private readonly DispatcherTimer _countdownTimer;
     private readonly DispatcherTimer _errorToastTimer;
+    private readonly DispatcherTimer _alertTimer;
     private AppSettings _settings;
     private TornTravelStatus? _travelStatus;
     private TornMoneyStatus? _moneyStatus;
@@ -27,7 +35,11 @@ public partial class MainWindow : Window
     private string? _lastShownError;
     private DateTimeOffset? _lastUpdateCheckAt;
     private readonly Dictionary<string, int> _manualBoughtReservations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _sentAlertKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _isApplyingPlannerPreset;
+    private bool _isCheckingAlerts;
+    private bool _nerveNearFullAlertActive;
+    private TravelPlannerSessionPlan? _currentPlannerPlan;
     private IReadOnlyList<TravelDestination> _allDestinations = Array.Empty<TravelDestination>();
 
     public MainWindow()
@@ -37,6 +49,8 @@ public partial class MainWindow : Window
 
         _settingsService = new AppSettingsService();
         _updateCheckerService = new UpdateCheckerService();
+        _notificationService = new DesktopNotificationService();
+        _discordWebhookService = new DiscordWebhookService();
         _settings = _settingsService.Load();
         ApiKeyBox.Password = _settings.TornApiKey;
         BuyCapacityBox.Text = _settings.BuyCapacity > 0
@@ -44,6 +58,7 @@ public partial class MainWindow : Window
             : string.Empty;
         RefreshIntervalBox.Text = _settings.RefreshIntervalMinutes.ToString("N0");
         MaxSpendPercentBox.Text = _settings.MaxSpendPercent.ToString("N0");
+        InitializeAlertSettings();
         SelectRestockAvailabilityMode(_settings.RestockAvailabilityMode);
         RestockAvailabilityModeBox.SelectionChanged += RestockAvailabilityModeBox_SelectionChanged;
         SelectPlannerStrategy(_plannerStrategy);
@@ -74,6 +89,12 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromSeconds(9)
         };
         _errorToastTimer.Tick += ErrorToastTimer_Tick;
+        _alertTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(30)
+        };
+        _alertTimer.Tick += AlertTimer_Tick;
+        _alertTimer.Start();
 
         ApplyState(_travelRefreshService.GetState());
         Loaded += MainWindow_Loaded;
@@ -96,8 +117,12 @@ public partial class MainWindow : Window
         _countdownTimer.Tick -= CountdownTimer_Tick;
         _errorToastTimer.Stop();
         _errorToastTimer.Tick -= ErrorToastTimer_Tick;
+        _alertTimer.Stop();
+        _alertTimer.Tick -= AlertTimer_Tick;
         _travelRefreshService.Dispose();
         _updateCheckerService.Dispose();
+        _notificationService.Dispose();
+        _discordWebhookService.Dispose();
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -145,7 +170,7 @@ public partial class MainWindow : Window
             UpdateStatusText.Text = "Up to date";
             if (showNoUpdateMessage)
             {
-                MessageBox.Show(
+                WpfMessageBox.Show(
                     this,
                     "You are already running the latest version.",
                     "Torn Stock Travel Update",
@@ -162,7 +187,7 @@ public partial class MainWindow : Window
         UpdateStatusText.Text = "Update available";
 
         string releaseNotes = FormatReleaseNotesPreview(updateInfo.Body);
-        MessageBoxResult result = MessageBox.Show(
+        MessageBoxResult result = WpfMessageBox.Show(
             this,
             $"Version {updateInfo.TagName} is available.\n\nDownload size: {updateInfo.AssetSizeText}\n\nDownload and install now?\n\n{releaseNotes}",
             "Torn Stock Travel Update",
@@ -188,7 +213,7 @@ public partial class MainWindow : Window
                 PendingReleaseNotes = updateInfo.Body
             };
             _settingsService.Save(_settings);
-            MessageBox.Show(
+            WpfMessageBox.Show(
                 this,
                 "The app will close for a moment, install the update, and restart automatically.",
                 "Installing update",
@@ -197,7 +222,7 @@ public partial class MainWindow : Window
 
             installStarted = true;
             _updateCheckerService.StartUpdater(downloadedExePath);
-            Application.Current.Shutdown();
+            System.Windows.Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
@@ -260,6 +285,53 @@ public partial class MainWindow : Window
         UpdateTravelPlanner();
     }
 
+    private void SaveAlertSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadAlertSettings(out AppSettings nextSettings, out string? validationError))
+        {
+            AlertSettingsStatusText.Text = validationError ?? "Invalid alert settings.";
+            return;
+        }
+
+        _settings = nextSettings;
+        _settingsService.Save(_settings);
+        _sentAlertKeys.Clear();
+        AlertSettingsStatusText.Text = "Alert settings saved";
+    }
+
+    private void TestAlertButton_Click(object sender, RoutedEventArgs e)
+    {
+        _notificationService.Show(
+            "Torn Stock Travel test",
+            "Windows notifications are working. Discord webhook alerts are sent only by real alert events.");
+        AlertSettingsStatusText.Text = "Windows test requested. If nothing appears, check Windows notification or focus assist settings.";
+        ShowErrorToastIfNeeded("Windows notification test requested.");
+    }
+
+    private async void TestDiscordButton_Click(object sender, RoutedEventArgs e)
+    {
+        string webhookUrl = DiscordWebhookBox.Password.Trim();
+        if (!IsValidDiscordWebhookUrl(webhookUrl))
+        {
+            AlertSettingsStatusText.Text = "Enter a valid https Discord webhook URL.";
+            return;
+        }
+
+        try
+        {
+            await _discordWebhookService.SendAsync(
+                webhookUrl,
+                "**Torn Stock Travel test**\nDiscord webhook alerts are connected.");
+            AlertSettingsStatusText.Text = "Discord test message sent";
+        }
+        catch (Exception ex)
+        {
+            AppLogService.Warning($"Discord test failed: {ex.Message}");
+            AlertSettingsStatusText.Text = "Discord test failed";
+            ShowErrorToastIfNeeded($"Discord test failed: {ex.Message}");
+        }
+    }
+
     private async void RestockAvailabilityModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         RestockAvailabilityMode mode = GetSelectedRestockAvailabilityMode();
@@ -311,7 +383,7 @@ public partial class MainWindow : Window
         UpdateTravelPlanner();
     }
 
-    private void PlannerWindowBox_KeyDown(object sender, KeyEventArgs e)
+    private void PlannerWindowBox_KeyDown(object sender, WpfKeyEventArgs e)
     {
         if (e.Key != Key.Enter)
         {
@@ -394,7 +466,7 @@ public partial class MainWindow : Window
 
     private void MarkTripBoughtButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button button || button.Tag is not TravelPlanCandidate candidate || candidate.Stock <= 0)
+        if (sender is not WpfButton button || button.Tag is not TravelPlanCandidate candidate || candidate.Stock <= 0)
         {
             return;
         }
@@ -454,15 +526,15 @@ public partial class MainWindow : Window
 
     private async void BazaarPriceBox_LostFocus(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBox textBox)
+        if (sender is WpfTextBox textBox)
         {
             await SaveBazaarPriceAsync(textBox);
         }
     }
 
-    private async void BazaarPriceBox_KeyDown(object sender, KeyEventArgs e)
+    private async void BazaarPriceBox_KeyDown(object sender, WpfKeyEventArgs e)
     {
-        if (e.Key != Key.Enter || sender is not TextBox textBox)
+        if (e.Key != Key.Enter || sender is not WpfTextBox textBox)
         {
             return;
         }
@@ -578,7 +650,7 @@ public partial class MainWindow : Window
     private HashSet<string> GetSelectedCountryCodes()
     {
         return CountryFilterPanel.Children
-            .OfType<CheckBox>()
+            .OfType<WpfCheckBox>()
             .Where(checkBox => checkBox.IsChecked == true && checkBox.Tag is string)
             .Select(checkBox => ((string)checkBox.Tag).ToLowerInvariant())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -637,6 +709,7 @@ public partial class MainWindow : Window
         if (!TryReadPlannerWindow(out DateTimeOffset windowStart, out DateTimeOffset windowEnd, out string? validationError))
         {
             PlannerWindowSummaryText.Text = validationError ?? "Invalid active window.";
+            _currentPlannerPlan = null;
             TravelPlannerCards.ItemsSource = Array.Empty<TravelPlanCard>();
             TravelPlannerTimeline.ItemsSource = Array.Empty<TravelPlanTimelineEntry>();
             return;
@@ -645,6 +718,7 @@ public partial class MainWindow : Window
         if (!TryReadPlannerCapacity(out int? plannerCapacity, out string? capacityError))
         {
             PlannerWindowSummaryText.Text = capacityError ?? "Invalid carry capacity.";
+            _currentPlannerPlan = null;
             TravelPlannerCards.ItemsSource = Array.Empty<TravelPlanCard>();
             TravelPlannerTimeline.ItemsSource = Array.Empty<TravelPlanTimelineEntry>();
             return;
@@ -665,6 +739,7 @@ public partial class MainWindow : Window
             plannerCapacity,
             _manualBoughtReservations);
 
+        _currentPlannerPlan = plan;
         PlannerWindowSummaryText.Text = plan.SummaryText;
         UpdatePlannerWalletReadiness(plan);
         TravelPlannerTimeline.ItemsSource = BuildTimelineEntries(plan);
@@ -732,6 +807,141 @@ public partial class MainWindow : Window
         HideErrorToast();
     }
 
+    private async void AlertTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_isCheckingAlerts)
+        {
+            return;
+        }
+
+        _isCheckingAlerts = true;
+        try
+        {
+            await CheckTravelStatusAlertsAsync(DateTimeOffset.Now);
+            await CheckBarsAlertsAsync();
+            await CheckPlannerAlertsAsync(DateTimeOffset.Now);
+        }
+        finally
+        {
+            _isCheckingAlerts = false;
+        }
+    }
+
+    private async Task CheckTravelStatusAlertsAsync(DateTimeOffset now)
+    {
+        if (!_settings.LandingReminderEnabled || _travelStatus is null || !_travelStatus.IsTraveling)
+        {
+            return;
+        }
+
+        TimeSpan? remaining = _travelStatus.GetRemaining(now);
+        if (remaining is null || remaining.Value <= TimeSpan.Zero || remaining.Value > TimeSpan.FromMinutes(1))
+        {
+            return;
+        }
+
+        string arrivalKey = _travelStatus.ArrivalAt is null
+            ? $"{_travelStatus.Destination}:{_travelStatus.FetchedAt.UtcTicks}:{_travelStatus.TimeLeftSeconds}"
+            : $"{_travelStatus.Destination}:{_travelStatus.ArrivalAt.Value.UtcTicks}";
+        string alertKey = $"landing:{arrivalKey}";
+        if (!_sentAlertKeys.Add(alertKey))
+        {
+            return;
+        }
+
+        await SendPlannerAlertAsync(
+            "Landing soon",
+            $"You are about to land in {_travelStatus.DestinationText}. Time left: {FormatDuration(remaining.Value)}.");
+    }
+
+    private async Task CheckBarsAlertsAsync()
+    {
+        if (!_settings.NerveNearFullAlertEnabled || _barsStatus is null)
+        {
+            return;
+        }
+
+        int missingNerve = _barsStatus.Nerve.Maximum - _barsStatus.Nerve.Current;
+        bool isNearFull = missingNerve > 0 && missingNerve <= 5;
+        if (!isNearFull)
+        {
+            _nerveNearFullAlertActive = false;
+            return;
+        }
+
+        if (_nerveNearFullAlertActive)
+        {
+            return;
+        }
+
+        _nerveNearFullAlertActive = true;
+        await SendPlannerAlertAsync(
+            "Nerve almost full",
+            $"Nerve is {_barsStatus.Nerve.ValueText}. Only {missingNerve:N0} point{(missingNerve == 1 ? string.Empty : "s")} missing.");
+    }
+
+    private async Task CheckPlannerAlertsAsync(DateTimeOffset now)
+    {
+        TravelPlannerSessionPlan? plan = _currentPlannerPlan;
+        if (plan is null || plan.Trips.Count == 0)
+        {
+            return;
+        }
+
+        bool anyAlertEnabled = _settings.DepartureRemindersEnabled || _settings.RestockAlertsEnabled;
+        if (!anyAlertEnabled)
+        {
+            return;
+        }
+
+        TimeSpan leadTime = TimeSpan.FromMinutes(_settings.DepartureReminderMinutes);
+        foreach (TravelPlanCandidate trip in plan.Trips)
+        {
+            TimeSpan untilDeparture = trip.DepartAt - now;
+            if (untilDeparture < TimeSpan.FromMinutes(-1) || untilDeparture > leadTime)
+            {
+                continue;
+            }
+
+            bool isRestockTrip = trip.UsesForecast
+                || trip.TripType.Contains("restock", StringComparison.OrdinalIgnoreCase)
+                || trip.TripType.Contains("forecast", StringComparison.OrdinalIgnoreCase);
+            bool shouldAlert = _settings.DepartureRemindersEnabled
+                || (_settings.RestockAlertsEnabled && isRestockTrip);
+            if (!shouldAlert)
+            {
+                continue;
+            }
+
+            string alertKey = $"{trip.DestinationCode}:{trip.ItemName}:{trip.DepartAt.UtcTicks}:{isRestockTrip}";
+            if (!_sentAlertKeys.Add(alertKey))
+            {
+                continue;
+            }
+
+            string title = isRestockTrip ? "Restock trip departure" : "Trip departure";
+            string message = $"Depart {trip.DepartText} for {trip.DestinationText} - {trip.ItemName}. Bring ${trip.CashNeededText}. Expected ${trip.ProfitPerHourText}/h, return {trip.ReturnText}.";
+            await SendPlannerAlertAsync(title, message);
+        }
+    }
+
+    private async Task SendPlannerAlertAsync(string title, string message)
+    {
+        try
+        {
+            _notificationService.Show(title, message);
+            if (_settings.DiscordAlertsEnabled && !string.IsNullOrWhiteSpace(_settings.DiscordWebhookUrl))
+            {
+                await _discordWebhookService.SendAsync(_settings.DiscordWebhookUrl, $"**{title}**\n{message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogService.Warning($"Alert delivery failed: {ex.Message}");
+            ShowErrorToastIfNeeded($"Alert delivery failed: {ex.Message}");
+        }
+    }
+
     private void DismissErrorToastButton_Click(object sender, RoutedEventArgs e)
     {
         HideErrorToast();
@@ -755,7 +965,7 @@ public partial class MainWindow : Window
             : $"{duration.Minutes:00}:{duration.Seconds:00}";
     }
 
-    private async Task SaveBazaarPriceAsync(TextBox textBox)
+    private async Task SaveBazaarPriceAsync(WpfTextBox textBox)
     {
         if (textBox.Tag is not int itemId || itemId <= 0)
         {
@@ -832,6 +1042,67 @@ public partial class MainWindow : Window
         LogPathText.Text = $"Error log: {AppLogService.LogPath}";
     }
 
+    private void InitializeAlertSettings()
+    {
+        DepartureReminderCheckBox.IsChecked = _settings.DepartureRemindersEnabled;
+        DepartureReminderMinutesBox.Text = _settings.DepartureReminderMinutes.ToString("N0");
+        RestockAlertCheckBox.IsChecked = _settings.RestockAlertsEnabled;
+        LandingReminderCheckBox.IsChecked = _settings.LandingReminderEnabled;
+        NerveNearFullAlertCheckBox.IsChecked = _settings.NerveNearFullAlertEnabled;
+        DiscordAlertCheckBox.IsChecked = _settings.DiscordAlertsEnabled;
+        DiscordWebhookBox.Password = _settings.DiscordWebhookUrl;
+        AlertSettingsStatusText.Text = "Alerts inactive until enabled";
+    }
+
+    private bool TryReadAlertSettings(out AppSettings nextSettings, out string? validationError)
+    {
+        nextSettings = _settings;
+        validationError = null;
+
+        if (!int.TryParse(
+                DepartureReminderMinutesBox.Text.Trim(),
+                NumberStyles.Integer | NumberStyles.AllowThousands,
+                CultureInfo.CurrentCulture,
+                out int minutes))
+        {
+            validationError = "Lead time must be a number.";
+            return false;
+        }
+
+        if (minutes < AppSettings.MinimumDepartureReminderMinutes
+            || minutes > AppSettings.MaximumDepartureReminderMinutes)
+        {
+            validationError = $"Lead time must be between {AppSettings.MinimumDepartureReminderMinutes} and {AppSettings.MaximumDepartureReminderMinutes} minutes.";
+            return false;
+        }
+
+        string webhookUrl = DiscordWebhookBox.Password.Trim();
+        bool discordEnabled = DiscordAlertCheckBox.IsChecked == true;
+        if (discordEnabled && !IsValidDiscordWebhookUrl(webhookUrl))
+        {
+            validationError = "Discord webhook must be a valid https URL.";
+            return false;
+        }
+
+        nextSettings = _settings with
+        {
+            DepartureRemindersEnabled = DepartureReminderCheckBox.IsChecked == true,
+            DepartureReminderMinutes = minutes,
+            RestockAlertsEnabled = RestockAlertCheckBox.IsChecked == true,
+            LandingReminderEnabled = LandingReminderCheckBox.IsChecked == true,
+            NerveNearFullAlertEnabled = NerveNearFullAlertCheckBox.IsChecked == true,
+            DiscordAlertsEnabled = discordEnabled,
+            DiscordWebhookUrl = webhookUrl
+        };
+        return true;
+    }
+
+    private static bool IsValidDiscordWebhookUrl(string webhookUrl)
+    {
+        return Uri.TryCreate(webhookUrl, UriKind.Absolute, out Uri? webhookUri)
+            && webhookUri.Scheme == Uri.UriSchemeHttps;
+    }
+
     private void ShowChangelogNoticeIfNeeded()
     {
         string currentVersion = FormatVersion(UpdateCheckerService.GetCurrentVersion());
@@ -863,7 +1134,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        MessageBox.Show(
+        WpfMessageBox.Show(
             this,
             $"Updated to v{currentVersion}.\n\n{releaseNotes}",
             "Torn Stock Travel",
@@ -1033,7 +1304,7 @@ public partial class MainWindow : Window
     private void SetPlannerExcludedCountries(IReadOnlyList<string> countryCodes)
     {
         HashSet<string> excluded = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (CheckBox checkBox in PlannerExcludedCountryPanel.Children.OfType<CheckBox>())
+        foreach (WpfCheckBox checkBox in PlannerExcludedCountryPanel.Children.OfType<WpfCheckBox>())
         {
             if (checkBox.Tag is string tag)
             {
@@ -1122,7 +1393,7 @@ public partial class MainWindow : Window
     private HashSet<string> GetPlannerExcludedCountryCodes()
     {
         return PlannerExcludedCountryPanel.Children
-            .OfType<CheckBox>()
+            .OfType<WpfCheckBox>()
             .Where(checkBox => checkBox.IsChecked == true && checkBox.Tag is string)
             .Select(checkBox => ((string)checkBox.Tag).ToLowerInvariant())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
