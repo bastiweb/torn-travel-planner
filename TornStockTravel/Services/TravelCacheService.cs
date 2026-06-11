@@ -54,4 +54,5 @@ public sealed record TravelCacheSnapshot(
     TornTravelStatus? TravelStatus,
     TornMoneyStatus? MoneyStatus,
     TornBarsStatus? BarsStatus,
+    TornCooldownStatus? CooldownStatus,
     DroqsForecastSnapshot? ForecastSnapshot);

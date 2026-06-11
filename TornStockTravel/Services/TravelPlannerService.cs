@@ -66,6 +66,7 @@ public static class TravelPlannerService
         DateTimeOffset now,
         DateTimeOffset windowStart,
         DateTimeOffset windowEnd,
+        TornCooldownStatus? cooldownStatus = null,
         int? plannerBuyCapacity = null,
         IReadOnlyDictionary<string, int>? manualReservedCurrentStock = null)
     {
@@ -122,6 +123,8 @@ public static class TravelPlannerService
             {
                 break;
             }
+
+            selected = AddCooldownContext(selected, candidates, cooldownStatus);
 
             trips.Add(selected with
             {
@@ -353,6 +356,8 @@ public static class TravelPlannerService
             availabilityText,
             confidenceText,
             BuildStrategyExplanation(strategy, tripType, usesForecast, profitPerHour, energyWaste, nerveWaste),
+            string.Empty,
+            string.Empty,
             usesForecast,
             energyWaste,
             nerveWaste,
@@ -435,6 +440,8 @@ public static class TravelPlannerService
             BuildForecastSafetyText(match.Window),
             BuildForecastConfidenceText(forecastInfo, match.Window),
             BuildStrategyExplanation(strategy, ForecastTripType, usesForecast: true, profitPerHour, energyWaste, nerveWaste),
+            string.Empty,
+            string.Empty,
             true,
             energyWaste,
             nerveWaste,
@@ -591,25 +598,7 @@ public static class TravelPlannerService
 
     private static DateTimeOffset GetNextTornAvailability(TornTravelStatus? travelStatus, DateTimeOffset now)
     {
-        if (travelStatus is null || !travelStatus.IsTraveling)
-        {
-            return now;
-        }
-
-        DateTimeOffset arrivalAt = travelStatus.ArrivalAt ?? now.Add(travelStatus.GetRemaining(now) ?? TimeSpan.Zero);
-
-        if (TravelFlightTimes.IsTornDestination(travelStatus.Destination))
-        {
-            return arrivalAt;
-        }
-
-        TimeSpan? returnFlightDuration = travelStatus.Destination is null
-            ? null
-            : TravelFlightTimes.GetFlightDuration(travelStatus.Destination);
-
-        return returnFlightDuration is null
-            ? arrivalAt
-            : arrivalAt.Add(LocalStayDuration).Add(returnFlightDuration.Value);
+        return TravelAvailabilityService.GetAvailability(travelStatus, now).ReadyInTornAt;
     }
 
     private static string BuildConfidenceText(TravelItem item)
@@ -695,6 +684,39 @@ public static class TravelPlannerService
             : "No energy or nerve cap is expected.";
 
         return $"Chosen because: ${profitPerHour:N0}/h. {strategyText} {timingText} {wasteText}";
+    }
+
+    private static TravelPlanCandidate AddCooldownContext(
+        TravelPlanCandidate selected,
+        IReadOnlyList<TravelPlanCandidate> candidates,
+        TornCooldownStatus? cooldownStatus)
+    {
+        DateTimeOffset? drugEndsAt = cooldownStatus?.DrugEndsAt;
+        if (drugEndsAt is null
+            || drugEndsAt.Value <= selected.DepartAt
+            || drugEndsAt.Value > selected.ReturnAt)
+        {
+            return selected;
+        }
+
+        DateTimeOffset latestGoodReturn = drugEndsAt.Value.AddMinutes(10);
+        TravelPlanCandidate? alternative = candidates
+            .Where(candidate => !ReferenceEquals(candidate, selected))
+            .Where(candidate => candidate.ReturnAt >= drugEndsAt.Value && candidate.ReturnAt <= latestGoodReturn)
+            .OrderByDescending(candidate => candidate.ProfitPerHour)
+            .ThenByDescending(candidate => candidate.Profit)
+            .FirstOrDefault();
+
+        string cooldownText = $"Drug cooldown ends during this trip at {drugEndsAt.Value.LocalDateTime:HH:mm}.";
+        string alternativeText = alternative is null
+            ? "No alternative route returns within 10 minutes after drug cooldown."
+            : $"Alternative: {alternative.DestinationText} - {alternative.ItemName}, return {alternative.ReturnText}, ${alternative.ProfitPerHourText}/h.";
+
+        return selected with
+        {
+            CooldownText = cooldownText,
+            AlternativeRouteText = alternativeText
+        };
     }
 
     private static bool IsItemAllowed(TravelItem item, TravelPlannerFilters filters)

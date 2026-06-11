@@ -19,6 +19,7 @@ public sealed record TravelRefreshState(
     TornTravelStatus? TravelStatus,
     TornMoneyStatus? MoneyStatus,
     TornBarsStatus? BarsStatus,
+    TornCooldownStatus? CooldownStatus,
     DroqsForecastSnapshot? ForecastSnapshot,
     string? Error,
     DateTimeOffset? LastUpdated,

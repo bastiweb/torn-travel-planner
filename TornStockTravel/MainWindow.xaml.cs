@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private TornTravelStatus? _travelStatus;
     private TornMoneyStatus? _moneyStatus;
     private TornBarsStatus? _barsStatus;
+    private TornCooldownStatus? _cooldownStatus;
     private DroqsForecastSnapshot? _forecastSnapshot;
     private TravelPlannerStrategy _plannerStrategy = TravelPlannerStrategy.Balanced;
     private DateTimeOffset _plannerWindowStart;
@@ -58,6 +59,7 @@ public partial class MainWindow : Window
             : string.Empty;
         RefreshIntervalBox.Text = _settings.RefreshIntervalMinutes.ToString("N0");
         MaxSpendPercentBox.Text = _settings.MaxSpendPercent.ToString("N0");
+        WatchlistBox.Text = string.Join(", ", _settings.WatchlistItemNames);
         InitializeAlertSettings();
         SelectRestockAvailabilityMode(_settings.RestockAvailabilityMode);
         RestockAvailabilityModeBox.SelectionChanged += RestockAvailabilityModeBox_SelectionChanged;
@@ -559,6 +561,7 @@ public partial class MainWindow : Window
         _travelStatus = state.TravelStatus;
         _moneyStatus = state.MoneyStatus;
         _barsStatus = state.BarsStatus;
+        _cooldownStatus = state.CooldownStatus;
         _forecastSnapshot = state.ForecastSnapshot;
         UpdateTravelStatus();
         UpdateMoneyStatus();
@@ -572,6 +575,7 @@ public partial class MainWindow : Window
         RefreshButton.IsEnabled = state.Status != TravelRefreshStatus.Loading;
         UpdateRecommendation();
         UpdateTravelPlanner();
+        UpdateDashboardIntelligence();
         ApplyDashboardFilter();
 
         ShowErrorToastIfNeeded(state.Error);
@@ -605,6 +609,17 @@ public partial class MainWindow : Window
     private void CountryFilter_Changed(object sender, RoutedEventArgs e)
     {
         ApplyDashboardFilter();
+    }
+
+    private void SaveWatchlistButton_Click(object sender, RoutedEventArgs e)
+    {
+        _settings = _settings with
+        {
+            WatchlistItemNames = SplitPlannerFilterText(WatchlistBox.Text)
+        };
+        _settingsService.Save(_settings);
+        WatchlistBox.Text = string.Join(", ", _settings.WatchlistItemNames);
+        UpdateDashboardIntelligence();
     }
 
     private void ApplyDashboardFilter()
@@ -651,6 +666,105 @@ public partial class MainWindow : Window
             : Visibility.Collapsed;
     }
 
+    private void UpdateDashboardIntelligence()
+    {
+        InventoryValueSummary inventorySummary = BuildInventoryValueSummary();
+        InventoryValueText.Text = $"${inventorySummary.TotalValueText}";
+        InventoryProfitText.Text = $"${inventorySummary.ExpectedProfitText}";
+        InventoryDetailsText.Text = $"{inventorySummary.RelevantOwnedItemsText} owned relevant items";
+        WatchlistSummaryText.Text = $"{inventorySummary.WatchlistMatchesText} watchlist matches";
+        CountrySummaryCards.ItemsSource = BuildCountrySummaryCards();
+        WatchlistItemsList.ItemsSource = BuildWatchlistItems();
+        UpdateForecastQualityBadge();
+    }
+
+    private InventoryValueSummary BuildInventoryValueSummary()
+    {
+        List<TravelItem> allItems = _allDestinations.SelectMany(destination => destination.Items).ToList();
+        List<TravelItem> uniqueOwnedItems = allItems
+            .Where(item => item.OwnedAmount > 0 && item.EffectiveValue is not null)
+            .GroupBy(item => item.Id)
+            .Select(group => group.First())
+            .ToList();
+        decimal totalValue = uniqueOwnedItems.Sum(item => item.OwnedValue ?? 0);
+        decimal expectedProfit = allItems.Where(item => item.Profit is > 0).Sum(item => item.Profit ?? 0);
+        int watchlistMatches = BuildWatchlistItems().Count;
+
+        return new InventoryValueSummary(totalValue, expectedProfit, uniqueOwnedItems.Count, watchlistMatches);
+    }
+
+    private IReadOnlyList<CountrySummaryCard> BuildCountrySummaryCards()
+    {
+        return _allDestinations
+            .Select(destination =>
+            {
+                List<TravelItem> profitableItems = destination.Items
+                    .Where(item => item.ProfitPerHour is > 0)
+                    .OrderByDescending(item => item.ProfitPerHour)
+                    .ToList();
+                TravelItem? bestItem = profitableItems.FirstOrDefault();
+                DateTimeOffset? nextRestock = destination.Items
+                    .Where(item => item.RestockEstimateUtc is not null)
+                    .Select(item => item.RestockEstimateUtc!.Value)
+                    .Where(restock => restock >= DateTimeOffset.UtcNow.AddHours(-1))
+                    .OrderBy(restock => restock)
+                    .Select(restock => (DateTimeOffset?)restock)
+                    .FirstOrDefault();
+
+                return new CountrySummaryCard(
+                    destination.Name,
+                    destination.Code,
+                    profitableItems.Count,
+                    bestItem?.ProfitPerHour ?? 0,
+                    bestItem?.Name ?? string.Empty,
+                    nextRestock);
+            })
+            .OrderByDescending(card => card.BestProfitPerHour)
+            .ToList();
+    }
+
+    private IReadOnlyList<WatchlistItemView> BuildWatchlistItems()
+    {
+        IReadOnlyList<string> watchlist = _settings.WatchlistItemNames;
+        if (watchlist.Count == 0)
+        {
+            return Array.Empty<WatchlistItemView>();
+        }
+
+        return _allDestinations
+            .SelectMany(destination => destination.Items
+                .Where(item => watchlist.Any(watch =>
+                    item.Name.Contains(watch, StringComparison.CurrentCultureIgnoreCase)))
+                .Select(item => new WatchlistItemView(
+                    item.Name,
+                    destination.DisplayName,
+                    item.ProfitPerHour is null ? "-" : $"${item.ProfitPerHour.Value:N0}/h",
+                    item.Quantity.ToString("N0"))))
+            .OrderBy(item => item.ItemName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.DestinationText, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    private void UpdateForecastQualityBadge()
+    {
+        if (_forecastSnapshot is null)
+        {
+            ForecastQualityBadgeText.Text = "Fallback";
+            ForecastQualityDetailsText.Text = "Droqs forecast unavailable";
+            return;
+        }
+
+        string freshness = string.IsNullOrWhiteSpace(_forecastSnapshot.SnapshotFreshness)
+            ? "unknown"
+            : _forecastSnapshot.SnapshotFreshness;
+        ForecastQualityBadgeText.Text = _forecastSnapshot.Stale
+            ? "Stale"
+            : freshness.Contains("fresh", StringComparison.OrdinalIgnoreCase)
+                ? "Fresh"
+                : "Live";
+        ForecastQualityDetailsText.Text = $"{_forecastSnapshot.ItemCount:N0} items, {_forecastSnapshot.WindowCount:N0} windows ({freshness})";
+    }
+
     private HashSet<string> GetSelectedCountryCodes()
     {
         return CountryFilterPanel.Children
@@ -692,13 +806,17 @@ public partial class MainWindow : Window
 
     private void UpdateBarsStatus()
     {
+        string cooldownText = _cooldownStatus is null
+            ? "Drug cooldown unavailable"
+            : _cooldownStatus.DrugText;
+
         if (_barsStatus is null)
         {
-            PlannerBarsText.Text = "Energy/nerve unavailable";
+            PlannerBarsText.Text = $"Energy/nerve unavailable | {cooldownText}";
             return;
         }
 
-        PlannerBarsText.Text = $"Energy {_barsStatus.Energy.ValueText}, full in {_barsStatus.Energy.FullInText} | Nerve {_barsStatus.Nerve.ValueText}, full in {_barsStatus.Nerve.FullInText}";
+        PlannerBarsText.Text = $"Energy {_barsStatus.Energy.ValueText}, full in {_barsStatus.Energy.FullInText} | Nerve {_barsStatus.Nerve.ValueText}, full in {_barsStatus.Nerve.FullInText} | {cooldownText}";
     }
 
     private void UpdateForecastStatus()
@@ -740,6 +858,7 @@ public partial class MainWindow : Window
             DateTimeOffset.Now,
             windowStart,
             windowEnd,
+            _cooldownStatus,
             plannerCapacity,
             _manualBoughtReservations);
 
@@ -823,6 +942,7 @@ public partial class MainWindow : Window
         {
             await CheckTravelStatusAlertsAsync(DateTimeOffset.Now);
             await CheckBarsAlertsAsync();
+            await CheckCooldownAlertsAsync(DateTimeOffset.Now);
             await CheckPlannerAlertsAsync(DateTimeOffset.Now);
         }
         finally
@@ -882,6 +1002,30 @@ public partial class MainWindow : Window
         await SendPlannerAlertAsync(
             "Nerve almost full",
             $"Nerve is {_barsStatus.Nerve.ValueText}. Only {missingNerve:N0} point{(missingNerve == 1 ? string.Empty : "s")} missing.");
+    }
+
+    private async Task CheckCooldownAlertsAsync(DateTimeOffset now)
+    {
+        if (!_settings.DrugCooldownReminderEnabled || _cooldownStatus?.DrugEndsAt is null)
+        {
+            return;
+        }
+
+        TimeSpan remaining = _cooldownStatus.DrugEndsAt.Value - now;
+        if (remaining <= TimeSpan.Zero || remaining > TimeSpan.FromMinutes(1))
+        {
+            return;
+        }
+
+        string alertKey = $"drug-cooldown:{_cooldownStatus.DrugEndsAt.Value.UtcTicks}";
+        if (!_sentAlertKeys.Add(alertKey))
+        {
+            return;
+        }
+
+        await SendPlannerAlertAsync(
+            "Drug cooldown ending",
+            $"Drug cooldown ends at {_cooldownStatus.DrugEndsAt.Value.LocalDateTime:HH:mm}. Time left: {FormatDuration(remaining)}.");
     }
 
     private async Task CheckPlannerAlertsAsync(DateTimeOffset now)
@@ -1054,6 +1198,7 @@ public partial class MainWindow : Window
         RestockAlertCheckBox.IsChecked = _settings.RestockAlertsEnabled;
         LandingReminderCheckBox.IsChecked = _settings.LandingReminderEnabled;
         NerveNearFullAlertCheckBox.IsChecked = _settings.NerveNearFullAlertEnabled;
+        DrugCooldownReminderCheckBox.IsChecked = _settings.DrugCooldownReminderEnabled;
         DiscordAlertCheckBox.IsChecked = _settings.DiscordAlertsEnabled;
         DiscordWebhookBox.Password = _settings.DiscordWebhookUrl;
         DiscordMessageTemplateBox.Text = _settings.DiscordMessageTemplate;
@@ -1097,6 +1242,7 @@ public partial class MainWindow : Window
             RestockAlertsEnabled = RestockAlertCheckBox.IsChecked == true,
             LandingReminderEnabled = LandingReminderCheckBox.IsChecked == true,
             NerveNearFullAlertEnabled = NerveNearFullAlertCheckBox.IsChecked == true,
+            DrugCooldownReminderEnabled = DrugCooldownReminderCheckBox.IsChecked == true,
             DiscordAlertsEnabled = discordEnabled,
             DiscordWebhookUrl = webhookUrl,
             DiscordMessageTemplate = NormalizeDiscordMessageTemplate(DiscordMessageTemplateBox.Text)

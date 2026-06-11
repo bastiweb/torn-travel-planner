@@ -39,6 +39,7 @@ public sealed class AppSettingsService
             RestockAvailabilityMode availabilityMode = NormalizeAvailabilityMode(
                 storedSettings?.RestockAvailabilityMode);
             IReadOnlyList<PlannerPreset> plannerPresets = NormalizePlannerPresets(storedSettings?.PlannerPresets);
+            IReadOnlyList<string> watchlistItemNames = NormalizeStringList(storedSettings?.WatchlistItemNames);
             string discordWebhookUrl = !string.IsNullOrWhiteSpace(storedSettings?.ProtectedDiscordWebhookUrl)
                 ? Unprotect(storedSettings.ProtectedDiscordWebhookUrl)
                 : storedSettings?.DiscordWebhookUrl ?? string.Empty;
@@ -56,11 +57,13 @@ public sealed class AppSettingsService
                     storedSettings.PendingReleaseVersion,
                     storedSettings.PendingReleaseNotes,
                     plannerPresets,
+                    watchlistItemNames,
                     storedSettings.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
                     departureReminderMinutes,
                     storedSettings.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
                     storedSettings.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
                     storedSettings.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
+                    storedSettings.DrugCooldownReminderEnabled ?? AppSettings.DefaultDrugCooldownReminderEnabled,
                     storedSettings.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
                     discordWebhookUrl,
                     NormalizeDiscordMessageTemplate(storedSettings.DiscordMessageTemplate));
@@ -77,11 +80,13 @@ public sealed class AppSettingsService
                 storedSettings?.PendingReleaseVersion,
                 storedSettings?.PendingReleaseNotes,
                 plannerPresets,
+                watchlistItemNames,
                 storedSettings?.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
                 departureReminderMinutes,
                 storedSettings?.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
                 storedSettings?.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
                 storedSettings?.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
+                storedSettings?.DrugCooldownReminderEnabled ?? AppSettings.DefaultDrugCooldownReminderEnabled,
                 storedSettings?.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
                 discordWebhookUrl,
                 NormalizeDiscordMessageTemplate(storedSettings?.DiscordMessageTemplate));
@@ -113,11 +118,13 @@ public sealed class AppSettingsService
                 preset.Strategy.ToString(),
                 preset.CarryCapacity,
                 preset.ActiveWindowHours)).ToList(),
+            settings.WatchlistItemNames.ToList(),
             settings.DepartureRemindersEnabled,
             settings.DepartureReminderMinutes,
             settings.RestockAlertsEnabled,
             settings.LandingReminderEnabled,
             settings.NerveNearFullAlertEnabled,
+            settings.DrugCooldownReminderEnabled,
             settings.DiscordAlertsEnabled,
             string.Empty,
             Protect(settings.DiscordWebhookUrl),
@@ -205,6 +212,21 @@ public sealed class AppSettingsService
         return presets.Count > 0 ? presets : GetDefaultPlannerPresets();
     }
 
+    private static IReadOnlyList<string> NormalizeStringList(List<string>? values)
+    {
+        if (values is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
     internal static IReadOnlyList<PlannerPreset> GetDefaultPlannerPresets()
     {
         return new[]
@@ -228,11 +250,13 @@ public sealed record AppSettings(
     string? PendingReleaseVersion,
     string? PendingReleaseNotes,
     IReadOnlyList<PlannerPreset> PlannerPresets,
+    IReadOnlyList<string> WatchlistItemNames,
     bool DepartureRemindersEnabled,
     int DepartureReminderMinutes,
     bool RestockAlertsEnabled,
     bool LandingReminderEnabled,
     bool NerveNearFullAlertEnabled,
+    bool DrugCooldownReminderEnabled,
     bool DiscordAlertsEnabled,
     string DiscordWebhookUrl,
     string DiscordMessageTemplate)
@@ -251,6 +275,7 @@ public sealed record AppSettings(
     public const bool DefaultRestockAlertsEnabled = false;
     public const bool DefaultLandingReminderEnabled = false;
     public const bool DefaultNerveNearFullAlertEnabled = false;
+    public const bool DefaultDrugCooldownReminderEnabled = false;
     public const bool DefaultDiscordAlertsEnabled = false;
     public const string DefaultDiscordMessageTemplate = "**{title}**\n{message}";
 
@@ -266,11 +291,13 @@ public sealed record AppSettings(
             null,
             null,
             AppSettingsService.GetDefaultPlannerPresets(),
+            Array.Empty<string>(),
             DefaultDepartureRemindersEnabled,
             DefaultDepartureReminderMinutes,
             DefaultRestockAlertsEnabled,
             DefaultLandingReminderEnabled,
             DefaultNerveNearFullAlertEnabled,
+            DefaultDrugCooldownReminderEnabled,
             DefaultDiscordAlertsEnabled,
             string.Empty,
             DefaultDiscordMessageTemplate)
@@ -290,11 +317,13 @@ internal sealed record StoredSettings(
     string? PendingReleaseVersion,
     string? PendingReleaseNotes,
     List<StoredPlannerPreset>? PlannerPresets,
+    List<string>? WatchlistItemNames,
     bool? DepartureRemindersEnabled,
     int? DepartureReminderMinutes,
     bool? RestockAlertsEnabled,
     bool? LandingReminderEnabled,
     bool? NerveNearFullAlertEnabled,
+    bool? DrugCooldownReminderEnabled,
     bool? DiscordAlertsEnabled,
     string? DiscordWebhookUrl,
     string? ProtectedDiscordWebhookUrl,

@@ -2,7 +2,6 @@ namespace TornStockTravel.Services;
 
 public static class TravelRecommendationService
 {
-    private static readonly TimeSpan LocalStayDuration = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan RestockWindowTolerance = TimeSpan.FromMinutes(2);
 
     public static TravelRecommendation? GetRecommendation(
@@ -13,7 +12,7 @@ public static class TravelRecommendationService
         RestockAvailabilityMode availabilityMode,
         DateTimeOffset now)
     {
-        DateTimeOffset readyAt = GetNextTornAvailability(travelStatus, now);
+        DateTimeOffset readyAt = TravelAvailabilityService.GetAvailability(travelStatus, now).ReadyInTornAt;
         decimal? wallet = moneyStatus?.Wallet;
         decimal? vault = moneyStatus?.Vault;
         decimal? spendLimit = moneyStatus is null
@@ -109,29 +108,6 @@ public static class TravelRecommendationService
             vault,
             maxSpendPercent,
             reason);
-    }
-
-    private static DateTimeOffset GetNextTornAvailability(TornTravelStatus? travelStatus, DateTimeOffset now)
-    {
-        if (travelStatus is null || !travelStatus.IsTraveling)
-        {
-            return now;
-        }
-
-        DateTimeOffset arrivalAt = travelStatus.ArrivalAt ?? now.Add(travelStatus.GetRemaining(now) ?? TimeSpan.Zero);
-
-        if (TravelFlightTimes.IsTornDestination(travelStatus.Destination))
-        {
-            return arrivalAt;
-        }
-
-        TimeSpan? returnFlightDuration = travelStatus.Destination is null
-            ? null
-            : TravelFlightTimes.GetFlightDuration(travelStatus.Destination);
-
-        return returnFlightDuration is null
-            ? arrivalAt
-            : arrivalAt.Add(LocalStayDuration).Add(returnFlightDuration.Value);
     }
 
     private static DateTimeOffset Max(DateTimeOffset first, DateTimeOffset second)

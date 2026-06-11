@@ -71,7 +71,6 @@ public static class TravelDashboardParser
                 code,
                 destinationName,
                 items
-                    .Where(item => item.Quantity > 0 || item.OwnedAmount > 0 || item.HasRestockEstimate)
                     .Where(item => item.UnitProfit > 0)
                     .OrderByDescending(item => item.ProfitPerHour ?? decimal.MinValue)
                     .ThenByDescending(item => item.Profit ?? decimal.MinValue)

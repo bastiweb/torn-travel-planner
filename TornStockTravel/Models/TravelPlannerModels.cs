@@ -82,6 +82,8 @@ public sealed record TravelPlanCandidate(
     string StockoutText,
     string ConfidenceText,
     string StrategyExplanationText,
+    string CooldownText,
+    string AlternativeRouteText,
     bool UsesForecast,
     bool EnergyWaste,
     bool NerveWaste,
@@ -199,6 +201,10 @@ public sealed record TravelPlanCard(
     public string WalletReadinessText => Candidate?.WalletReadinessText ?? "-";
 
     public string StrategyExplanationText => Candidate?.StrategyExplanationText ?? "-";
+
+    public string CooldownText => Candidate?.CooldownText ?? string.Empty;
+
+    public string AlternativeRouteText => Candidate?.AlternativeRouteText ?? string.Empty;
 
     public bool CanMarkBought => Candidate is not null && Candidate.Stock > 0 && Candidate.BuyAmount > 0;
 

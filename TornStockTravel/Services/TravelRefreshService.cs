@@ -14,6 +14,7 @@ public sealed class TravelRefreshService : IDisposable
     private readonly TornTravelStatusClient _tornTravelStatusClient;
     private readonly TornMoneyClient _tornMoneyClient;
     private readonly TornBarsClient _tornBarsClient;
+    private readonly TornCooldownsClient _tornCooldownsClient;
     private readonly DroqsRestockClient _droqsRestockClient;
     private readonly DroqsForecastClient _droqsForecastClient;
     private readonly TravelCacheService _cacheService;
@@ -41,6 +42,7 @@ public sealed class TravelRefreshService : IDisposable
         _tornTravelStatusClient = new TornTravelStatusClient();
         _tornMoneyClient = new TornMoneyClient();
         _tornBarsClient = new TornBarsClient();
+        _tornCooldownsClient = new TornCooldownsClient();
         _droqsRestockClient = new DroqsRestockClient();
         _droqsForecastClient = new DroqsForecastClient();
         _cacheService = new TravelCacheService();
@@ -60,6 +62,7 @@ public sealed class TravelRefreshService : IDisposable
             TravelRefreshStatus.Idle,
             null,
             Array.Empty<TravelDestination>(),
+            null,
             null,
             null,
             null,
@@ -173,6 +176,13 @@ public sealed class TravelRefreshService : IDisposable
                     () => _tornBarsClient.FetchBarsAsync(_tornApiKey),
                     _state.BarsStatus,
                     warnings);
+            Task<TornCooldownStatus?> cooldownStatusTask = string.IsNullOrWhiteSpace(_tornApiKey)
+                ? Task.FromResult<TornCooldownStatus?>(null)
+                : FetchOptionalAsync(
+                    "Torn cooldowns",
+                    () => _tornCooldownsClient.FetchCooldownsAsync(_tornApiKey),
+                    _state.CooldownStatus,
+                    warnings);
             Task<IReadOnlyDictionary<string, DroqsRestockInfo>> restocksTask =
                 FetchOptionalAsync(
                     "DroqsDB restocks",
@@ -186,7 +196,7 @@ public sealed class TravelRefreshService : IDisposable
                     _state.ForecastSnapshot,
                     warnings);
 
-            await Task.WhenAll(dataTask, itemDetailsTask, inventoryTask, travelStatusTask, moneyStatusTask, barsStatusTask, restocksTask, forecastTask);
+            await Task.WhenAll(dataTask, itemDetailsTask, inventoryTask, travelStatusTask, moneyStatusTask, barsStatusTask, cooldownStatusTask, restocksTask, forecastTask);
 
             JsonElement data = await dataTask;
             IReadOnlyDictionary<int, TornItemDetails> itemDetails = await itemDetailsTask;
@@ -194,6 +204,7 @@ public sealed class TravelRefreshService : IDisposable
             TornTravelStatus? travelStatus = await travelStatusTask;
             TornMoneyStatus? moneyStatus = await moneyStatusTask;
             TornBarsStatus? barsStatus = await barsStatusTask;
+            TornCooldownStatus? cooldownStatus = await cooldownStatusTask;
             IReadOnlyDictionary<string, DroqsRestockInfo> restocks = await restocksTask;
             DroqsForecastSnapshot? forecast = await forecastTask;
             IReadOnlyList<TravelDestination> destinations =
@@ -206,6 +217,7 @@ public sealed class TravelRefreshService : IDisposable
                 travelStatus,
                 moneyStatus,
                 barsStatus,
+                cooldownStatus,
                 forecast));
 
             PatchState(_state with
@@ -216,6 +228,7 @@ public sealed class TravelRefreshService : IDisposable
                 TravelStatus = travelStatus,
                 MoneyStatus = moneyStatus,
                 BarsStatus = barsStatus,
+                CooldownStatus = cooldownStatus,
                 ForecastSnapshot = forecast,
                 Error = warnings.IsEmpty
                     ? null
@@ -238,6 +251,7 @@ public sealed class TravelRefreshService : IDisposable
                     TravelStatus = cachedSnapshot.TravelStatus,
                     MoneyStatus = cachedSnapshot.MoneyStatus,
                     BarsStatus = cachedSnapshot.BarsStatus,
+                    CooldownStatus = cachedSnapshot.CooldownStatus,
                     ForecastSnapshot = cachedSnapshot.ForecastSnapshot,
                     Error = $"Live refresh failed: {ex.Message}{Environment.NewLine}Showing cached data from {cachedSnapshot.SavedAt.LocalDateTime:dd.MM.yyyy HH:mm:ss}.",
                     LastUpdated = cachedSnapshot.SavedAt,
@@ -319,6 +333,7 @@ public sealed class TravelRefreshService : IDisposable
         _tornTravelStatusClient.Dispose();
         _tornMoneyClient.Dispose();
         _tornBarsClient.Dispose();
+        _tornCooldownsClient.Dispose();
         _droqsRestockClient.Dispose();
         _droqsForecastClient.Dispose();
     }
