@@ -16,6 +16,7 @@ public sealed class TravelRefreshService : IDisposable
     private readonly TornBarsClient _tornBarsClient;
     private readonly DroqsRestockClient _droqsRestockClient;
     private readonly DroqsForecastClient _droqsForecastClient;
+    private readonly TravelCacheService _cacheService;
     private readonly DispatcherTimer _timer;
     private string _tornApiKey;
     private IReadOnlyDictionary<int, decimal> _bazaarPrices;
@@ -42,6 +43,7 @@ public sealed class TravelRefreshService : IDisposable
         _tornBarsClient = new TornBarsClient();
         _droqsRestockClient = new DroqsRestockClient();
         _droqsForecastClient = new DroqsForecastClient();
+        _cacheService = new TravelCacheService();
         _tornApiKey = tornApiKey;
         _bazaarPrices = bazaarPrices ?? new Dictionary<int, decimal>();
         _buyCapacity = buyCapacity;
@@ -58,6 +60,7 @@ public sealed class TravelRefreshService : IDisposable
             TravelRefreshStatus.Idle,
             null,
             Array.Empty<TravelDestination>(),
+            null,
             null,
             null,
             null,
@@ -195,6 +198,15 @@ public sealed class TravelRefreshService : IDisposable
             DroqsForecastSnapshot? forecast = await forecastTask;
             IReadOnlyList<TravelDestination> destinations =
                 TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, _availabilityMode, restocks);
+            DateTimeOffset refreshedAt = DateTimeOffset.Now;
+
+            _cacheService.Save(new TravelCacheSnapshot(
+                refreshedAt,
+                destinations,
+                travelStatus,
+                moneyStatus,
+                barsStatus,
+                forecast));
 
             PatchState(_state with
             {
@@ -208,16 +220,38 @@ public sealed class TravelRefreshService : IDisposable
                 Error = warnings.IsEmpty
                     ? null
                     : string.Join(Environment.NewLine, warnings.OrderBy(warning => warning, StringComparer.CurrentCultureIgnoreCase)),
-                LastUpdated = DateTimeOffset.Now
+                LastUpdated = refreshedAt,
+                StaleSince = null
             });
         }
         catch (Exception ex)
         {
-            PatchState(_state with
+            AppLogService.Error("Live travel refresh failed.", ex);
+            TravelCacheSnapshot? cachedSnapshot = _cacheService.Load();
+            if (cachedSnapshot is not null)
             {
-                Status = TravelRefreshStatus.Error,
-                Error = ex.Message
-            });
+                PatchState(_state with
+                {
+                    Status = TravelRefreshStatus.Stale,
+                    Data = null,
+                    Destinations = cachedSnapshot.Destinations,
+                    TravelStatus = cachedSnapshot.TravelStatus,
+                    MoneyStatus = cachedSnapshot.MoneyStatus,
+                    BarsStatus = cachedSnapshot.BarsStatus,
+                    ForecastSnapshot = cachedSnapshot.ForecastSnapshot,
+                    Error = $"Live refresh failed: {ex.Message}{Environment.NewLine}Showing cached data from {cachedSnapshot.SavedAt.LocalDateTime:dd.MM.yyyy HH:mm:ss}.",
+                    LastUpdated = cachedSnapshot.SavedAt,
+                    StaleSince = cachedSnapshot.SavedAt
+                });
+            }
+            else
+            {
+                PatchState(_state with
+                {
+                    Status = TravelRefreshStatus.Error,
+                    Error = ex.Message
+                });
+            }
         }
         finally
         {

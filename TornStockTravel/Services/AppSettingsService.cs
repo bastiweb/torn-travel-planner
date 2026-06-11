@@ -39,10 +39,28 @@ public sealed class AppSettingsService
 
             if (!string.IsNullOrWhiteSpace(storedSettings?.ProtectedTornApiKey))
             {
-                return new AppSettings(Unprotect(storedSettings.ProtectedTornApiKey), bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent, availabilityMode);
+                return new AppSettings(
+                    Unprotect(storedSettings.ProtectedTornApiKey),
+                    bazaarPrices,
+                    buyCapacity,
+                    refreshIntervalMinutes,
+                    maxSpendPercent,
+                    availabilityMode,
+                    storedSettings.LastSeenVersion,
+                    storedSettings.PendingReleaseVersion,
+                    storedSettings.PendingReleaseNotes);
             }
 
-            return new AppSettings(storedSettings?.TornApiKey ?? string.Empty, bazaarPrices, buyCapacity, refreshIntervalMinutes, maxSpendPercent, availabilityMode);
+            return new AppSettings(
+                storedSettings?.TornApiKey ?? string.Empty,
+                bazaarPrices,
+                buyCapacity,
+                refreshIntervalMinutes,
+                maxSpendPercent,
+                availabilityMode,
+                storedSettings?.LastSeenVersion,
+                storedSettings?.PendingReleaseVersion,
+                storedSettings?.PendingReleaseNotes);
         }
         catch
         {
@@ -59,7 +77,10 @@ public sealed class AppSettingsService
             settings.BuyCapacity,
             settings.RefreshIntervalMinutes,
             settings.MaxSpendPercent,
-            settings.RestockAvailabilityMode.ToString());
+            settings.RestockAvailabilityMode.ToString(),
+            settings.LastSeenVersion,
+            settings.PendingReleaseVersion,
+            settings.PendingReleaseNotes);
         string json = JsonSerializer.Serialize(storedSettings, JsonOptions.Pretty);
         File.WriteAllText(_settingsPath, json);
     }
@@ -107,7 +128,10 @@ public sealed record AppSettings(
     int BuyCapacity,
     int RefreshIntervalMinutes,
     int MaxSpendPercent,
-    RestockAvailabilityMode RestockAvailabilityMode)
+    RestockAvailabilityMode RestockAvailabilityMode,
+    string? LastSeenVersion,
+    string? PendingReleaseVersion,
+    string? PendingReleaseNotes)
 {
     public const int DefaultRefreshIntervalMinutes = 5;
     public const int MinimumRefreshIntervalMinutes = 1;
@@ -118,7 +142,7 @@ public sealed record AppSettings(
     public const RestockAvailabilityMode DefaultRestockAvailabilityMode = RestockAvailabilityMode.Conservative;
 
     public AppSettings(string TornApiKey)
-        : this(TornApiKey, new Dictionary<int, decimal>(), 0, DefaultRefreshIntervalMinutes, DefaultMaxSpendPercent, DefaultRestockAvailabilityMode)
+        : this(TornApiKey, new Dictionary<int, decimal>(), 0, DefaultRefreshIntervalMinutes, DefaultMaxSpendPercent, DefaultRestockAvailabilityMode, null, null, null)
     {
     }
 }
@@ -130,4 +154,7 @@ internal sealed record StoredSettings(
     int? BuyCapacity,
     int? RefreshIntervalMinutes,
     int? MaxSpendPercent,
-    string? RestockAvailabilityMode);
+    string? RestockAvailabilityMode,
+    string? LastSeenVersion,
+    string? PendingReleaseVersion,
+    string? PendingReleaseNotes);

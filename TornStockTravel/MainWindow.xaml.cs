@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _plannerWindowStart;
     private DateTimeOffset _plannerWindowEnd;
     private string? _lastShownError;
+    private DateTimeOffset? _lastUpdateCheckAt;
     private IReadOnlyList<TravelDestination> _allDestinations = Array.Empty<TravelDestination>();
 
     public MainWindow()
@@ -49,6 +50,7 @@ public partial class MainWindow : Window
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.TornApiKey)
             ? "No key saved"
             : "Key saved";
+        InitializeUpdateStatus();
 
         _travelRefreshService = new TravelRefreshService(
             _settings.TornApiKey,
@@ -76,6 +78,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        ShowChangelogNoticeIfNeeded();
         _travelRefreshService.Start();
         _ = CheckForUpdatesAsync();
     }
@@ -98,22 +101,61 @@ public partial class MainWindow : Window
         await _travelRefreshService.RefreshNowAsync();
     }
 
-    private async Task CheckForUpdatesAsync()
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckForUpdatesAsync(showNoUpdateMessage: true);
+    }
+
+    private async Task CheckForUpdatesAsync(bool showNoUpdateMessage = false)
     {
         GitHubUpdateInfo? updateInfo;
+        bool installStarted = false;
+        CheckForUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Text = "Checking...";
+
         try
         {
             updateInfo = await _updateCheckerService.CheckForUpdateAsync(UpdateCheckerService.GetCurrentVersion());
+            _lastUpdateCheckAt = DateTimeOffset.Now;
         }
-        catch
+        catch (Exception ex)
         {
+            _lastUpdateCheckAt = DateTimeOffset.Now;
+            UpdateLatestVersionText.Text = "-";
+            UpdateLastCheckText.Text = FormatDate(_lastUpdateCheckAt);
+            UpdateStatusText.Text = "Update check failed";
+            AppLogService.Warning($"Update check failed: {ex.Message}");
+            if (showNoUpdateMessage)
+            {
+                ShowErrorToastIfNeeded($"Update check failed: {ex.Message}");
+            }
+
+            CheckForUpdatesButton.IsEnabled = true;
             return;
         }
 
         if (updateInfo is null)
         {
+            UpdateLatestVersionText.Text = $"v{FormatVersion(UpdateCheckerService.GetCurrentVersion())}";
+            UpdateLastCheckText.Text = FormatDate(_lastUpdateCheckAt);
+            UpdateStatusText.Text = "Up to date";
+            if (showNoUpdateMessage)
+            {
+                MessageBox.Show(
+                    this,
+                    "You are already running the latest version.",
+                    "Torn Stock Travel Update",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
+            CheckForUpdatesButton.IsEnabled = true;
             return;
         }
+
+        UpdateLatestVersionText.Text = updateInfo.TagName;
+        UpdateLastCheckText.Text = FormatDate(_lastUpdateCheckAt);
+        UpdateStatusText.Text = "Update available";
 
         string releaseNotes = FormatReleaseNotesPreview(updateInfo.Body);
         MessageBoxResult result = MessageBox.Show(
@@ -125,14 +167,23 @@ public partial class MainWindow : Window
 
         if (result != MessageBoxResult.Yes)
         {
+            CheckForUpdatesButton.IsEnabled = true;
             return;
         }
 
         try
         {
             RefreshButton.IsEnabled = false;
+            CheckForUpdatesButton.IsEnabled = false;
             StatusText.Text = "Downloading update...";
+            UpdateStatusText.Text = "Downloading update...";
             string downloadedExePath = await _updateCheckerService.DownloadUpdateAsync(updateInfo);
+            _settings = _settings with
+            {
+                PendingReleaseVersion = NormalizeVersionTag(updateInfo.TagName),
+                PendingReleaseNotes = updateInfo.Body
+            };
+            _settingsService.Save(_settings);
             MessageBox.Show(
                 this,
                 "The app will close for a moment, install the update, and restart automatically.",
@@ -140,14 +191,25 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
 
+            installStarted = true;
             _updateCheckerService.StartUpdater(downloadedExePath);
             Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
             RefreshButton.IsEnabled = true;
+            CheckForUpdatesButton.IsEnabled = true;
             StatusText.Text = "Ready";
+            UpdateStatusText.Text = "Update failed";
+            AppLogService.Error("Update failed.", ex);
             ShowErrorToastIfNeeded($"Update failed: {ex.Message}");
+        }
+        finally
+        {
+            if (!installStarted)
+            {
+                CheckForUpdatesButton.IsEnabled = true;
+            }
         }
     }
 
@@ -346,6 +408,7 @@ public partial class MainWindow : Window
             TravelRefreshStatus.Idle => "Ready",
             TravelRefreshStatus.Loading => "Loading...",
             TravelRefreshStatus.Success => "Connected",
+            TravelRefreshStatus.Stale => "Stale cache",
             TravelRefreshStatus.Error => "Error",
             _ => status.ToString()
         };
@@ -647,16 +710,76 @@ public partial class MainWindow : Window
             : $"{normalized[..maximumLength]}...";
     }
 
+    private void InitializeUpdateStatus()
+    {
+        UpdateCurrentVersionText.Text = $"v{FormatVersion(UpdateCheckerService.GetCurrentVersion())}";
+        UpdateLatestVersionText.Text = "-";
+        UpdateLastCheckText.Text = "-";
+        UpdateStatusText.Text = "Not checked yet";
+        LogPathText.Text = $"Error log: {AppLogService.LogPath}";
+    }
+
+    private void ShowChangelogNoticeIfNeeded()
+    {
+        string currentVersion = FormatVersion(UpdateCheckerService.GetCurrentVersion());
+        bool hasPendingReleaseNotes = string.Equals(
+            NormalizeVersionTag(_settings.PendingReleaseVersion),
+            currentVersion,
+            StringComparison.OrdinalIgnoreCase);
+        string releaseNotes = hasPendingReleaseNotes
+            ? FormatReleaseNotesPreview(_settings.PendingReleaseNotes)
+            : "You can check for future release notes from the Settings tab.";
+
+        if (string.Equals(_settings.LastSeenVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        bool shouldShowNotice = !string.IsNullOrWhiteSpace(_settings.LastSeenVersion)
+            || hasPendingReleaseNotes;
+        _settings = _settings with
+        {
+            LastSeenVersion = currentVersion,
+            PendingReleaseVersion = null,
+            PendingReleaseNotes = null
+        };
+        _settingsService.Save(_settings);
+
+        if (!shouldShowNotice)
+        {
+            return;
+        }
+
+        MessageBox.Show(
+            this,
+            $"Updated to v{currentVersion}.\n\n{releaseNotes}",
+            "Torn Stock Travel",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
     private static string BuildWindowTitle()
     {
         Version version = UpdateCheckerService.GetCurrentVersion();
+        return $"Torn Stock Travel (v{FormatVersion(version)})";
+    }
+
+    private static string FormatVersion(Version version)
+    {
         string displayVersion = version.Revision > 0
             ? version.ToString()
             : version.Build > 0
                 ? version.ToString(3)
                 : version.ToString(2);
 
-        return $"Torn Stock Travel (v{displayVersion})";
+        return displayVersion;
+    }
+
+    private static string? NormalizeVersionTag(string? version)
+    {
+        return string.IsNullOrWhiteSpace(version)
+            ? null
+            : version.Trim().TrimStart('v', 'V');
     }
 
     private void SelectRestockAvailabilityMode(RestockAvailabilityMode mode)

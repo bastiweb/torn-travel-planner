@@ -7,6 +7,7 @@ public enum TravelRefreshStatus
     Idle,
     Loading,
     Success,
+    Stale,
     Error
 }
 
@@ -21,6 +22,7 @@ public sealed record TravelRefreshState(
     DroqsForecastSnapshot? ForecastSnapshot,
     string? Error,
     DateTimeOffset? LastUpdated,
+    DateTimeOffset? StaleSince,
     DateTimeOffset? LastStarted,
     DateTimeOffset? NextRefreshAt,
     TimeSpan RefreshInterval);
