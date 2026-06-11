@@ -319,9 +319,13 @@ public partial class MainWindow : Window
 
         try
         {
+            string message = FormatDiscordMessage(
+                NormalizeDiscordMessageTemplate(DiscordMessageTemplateBox.Text),
+                "Torn Stock Travel test",
+                "Discord webhook alerts are connected.");
             await _discordWebhookService.SendAsync(
                 webhookUrl,
-                "**Torn Stock Travel test**\nDiscord webhook alerts are connected.");
+                message);
             AlertSettingsStatusText.Text = "Discord test message sent";
         }
         catch (Exception ex)
@@ -932,7 +936,8 @@ public partial class MainWindow : Window
             _notificationService.Show(title, message);
             if (_settings.DiscordAlertsEnabled && !string.IsNullOrWhiteSpace(_settings.DiscordWebhookUrl))
             {
-                await _discordWebhookService.SendAsync(_settings.DiscordWebhookUrl, $"**{title}**\n{message}");
+                string discordMessage = FormatDiscordMessage(_settings.DiscordMessageTemplate, title, message);
+                await _discordWebhookService.SendAsync(_settings.DiscordWebhookUrl, discordMessage);
             }
         }
         catch (Exception ex)
@@ -1051,6 +1056,7 @@ public partial class MainWindow : Window
         NerveNearFullAlertCheckBox.IsChecked = _settings.NerveNearFullAlertEnabled;
         DiscordAlertCheckBox.IsChecked = _settings.DiscordAlertsEnabled;
         DiscordWebhookBox.Password = _settings.DiscordWebhookUrl;
+        DiscordMessageTemplateBox.Text = _settings.DiscordMessageTemplate;
         AlertSettingsStatusText.Text = "Alerts inactive until enabled";
     }
 
@@ -1092,7 +1098,8 @@ public partial class MainWindow : Window
             LandingReminderEnabled = LandingReminderCheckBox.IsChecked == true,
             NerveNearFullAlertEnabled = NerveNearFullAlertCheckBox.IsChecked == true,
             DiscordAlertsEnabled = discordEnabled,
-            DiscordWebhookUrl = webhookUrl
+            DiscordWebhookUrl = webhookUrl,
+            DiscordMessageTemplate = NormalizeDiscordMessageTemplate(DiscordMessageTemplateBox.Text)
         };
         return true;
     }
@@ -1101,6 +1108,23 @@ public partial class MainWindow : Window
     {
         return Uri.TryCreate(webhookUrl, UriKind.Absolute, out Uri? webhookUri)
             && webhookUri.Scheme == Uri.UriSchemeHttps;
+    }
+
+    private static string NormalizeDiscordMessageTemplate(string? template)
+    {
+        return string.IsNullOrWhiteSpace(template)
+            ? AppSettings.DefaultDiscordMessageTemplate
+            : template;
+    }
+
+    private static string FormatDiscordMessage(string template, string title, string message)
+    {
+        return NormalizeDiscordMessageTemplate(template)
+            .Replace("{title}", title, StringComparison.OrdinalIgnoreCase)
+            .Replace("{message}", message, StringComparison.OrdinalIgnoreCase)
+            .Replace("{app}", "Torn Stock Travel", StringComparison.OrdinalIgnoreCase)
+            .Replace("{time}", DateTimeOffset.Now.LocalDateTime.ToString("dd.MM.yyyy HH:mm:ss", CultureInfo.CurrentCulture), StringComparison.OrdinalIgnoreCase)
+            .Replace("{newline}", Environment.NewLine, StringComparison.OrdinalIgnoreCase);
     }
 
     private void ShowChangelogNoticeIfNeeded()

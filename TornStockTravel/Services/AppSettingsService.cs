@@ -62,7 +62,8 @@ public sealed class AppSettingsService
                     storedSettings.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
                     storedSettings.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
                     storedSettings.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
-                    discordWebhookUrl);
+                    discordWebhookUrl,
+                    NormalizeDiscordMessageTemplate(storedSettings.DiscordMessageTemplate));
             }
 
             return new AppSettings(
@@ -82,7 +83,8 @@ public sealed class AppSettingsService
                 storedSettings?.LandingReminderEnabled ?? AppSettings.DefaultLandingReminderEnabled,
                 storedSettings?.NerveNearFullAlertEnabled ?? AppSettings.DefaultNerveNearFullAlertEnabled,
                 storedSettings?.DiscordAlertsEnabled ?? AppSettings.DefaultDiscordAlertsEnabled,
-                discordWebhookUrl);
+                discordWebhookUrl,
+                NormalizeDiscordMessageTemplate(storedSettings?.DiscordMessageTemplate));
         }
         catch
         {
@@ -118,7 +120,8 @@ public sealed class AppSettingsService
             settings.NerveNearFullAlertEnabled,
             settings.DiscordAlertsEnabled,
             string.Empty,
-            Protect(settings.DiscordWebhookUrl));
+            Protect(settings.DiscordWebhookUrl),
+            settings.DiscordMessageTemplate);
         string json = JsonSerializer.Serialize(storedSettings, JsonOptions.Pretty);
         File.WriteAllText(_settingsPath, json);
     }
@@ -162,6 +165,13 @@ public sealed class AppSettingsService
         return Enum.TryParse(mode, ignoreCase: true, out RestockAvailabilityMode parsed)
             ? parsed
             : AppSettings.DefaultRestockAvailabilityMode;
+    }
+
+    private static string NormalizeDiscordMessageTemplate(string? template)
+    {
+        return string.IsNullOrWhiteSpace(template)
+            ? AppSettings.DefaultDiscordMessageTemplate
+            : template;
     }
 
     private static IReadOnlyList<PlannerPreset> NormalizePlannerPresets(List<StoredPlannerPreset>? storedPresets)
@@ -224,7 +234,8 @@ public sealed record AppSettings(
     bool LandingReminderEnabled,
     bool NerveNearFullAlertEnabled,
     bool DiscordAlertsEnabled,
-    string DiscordWebhookUrl)
+    string DiscordWebhookUrl,
+    string DiscordMessageTemplate)
 {
     public const int DefaultRefreshIntervalMinutes = 5;
     public const int MinimumRefreshIntervalMinutes = 1;
@@ -241,6 +252,7 @@ public sealed record AppSettings(
     public const bool DefaultLandingReminderEnabled = false;
     public const bool DefaultNerveNearFullAlertEnabled = false;
     public const bool DefaultDiscordAlertsEnabled = false;
+    public const string DefaultDiscordMessageTemplate = "**{title}**\n{message}";
 
     public AppSettings(string TornApiKey)
         : this(
@@ -260,7 +272,8 @@ public sealed record AppSettings(
             DefaultLandingReminderEnabled,
             DefaultNerveNearFullAlertEnabled,
             DefaultDiscordAlertsEnabled,
-            string.Empty)
+            string.Empty,
+            DefaultDiscordMessageTemplate)
     {
     }
 }
@@ -284,7 +297,8 @@ internal sealed record StoredSettings(
     bool? NerveNearFullAlertEnabled,
     bool? DiscordAlertsEnabled,
     string? DiscordWebhookUrl,
-    string? ProtectedDiscordWebhookUrl);
+    string? ProtectedDiscordWebhookUrl,
+    string? DiscordMessageTemplate);
 
 internal sealed record StoredPlannerPreset(
     string? Name,
