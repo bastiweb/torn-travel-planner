@@ -36,6 +36,8 @@ public static class TravelPlannerService
                 strategy,
                 TravelPlannerFilters.Empty,
                 now,
+                null,
+                null,
                 null),
             strategy);
 
@@ -63,7 +65,9 @@ public static class TravelPlannerService
         TravelPlannerFilters? filters,
         DateTimeOffset now,
         DateTimeOffset windowStart,
-        DateTimeOffset windowEnd)
+        DateTimeOffset windowEnd,
+        int? plannerBuyCapacity = null,
+        IReadOnlyDictionary<string, int>? manualReservedCurrentStock = null)
     {
         if (windowEnd <= windowStart)
         {
@@ -80,7 +84,9 @@ public static class TravelPlannerService
             ? null
             : moneyStatus.Total * maxSpendPercent / 100m;
         List<TravelPlanCandidate> trips = new();
-        Dictionary<string, int> reservedCurrentStock = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, int> reservedCurrentStock = manualReservedCurrentStock is null
+            ? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, int>(manualReservedCurrentStock, StringComparer.OrdinalIgnoreCase);
         DateTimeOffset readyAt = firstReadyAt;
         decimal plannedCashNeeded = 0;
 
@@ -107,6 +113,7 @@ public static class TravelPlannerService
                     filters ?? TravelPlannerFilters.Empty,
                     now,
                     windowEnd,
+                    plannerBuyCapacity,
                     reservedCurrentStock),
                 strategy);
 
@@ -151,6 +158,7 @@ public static class TravelPlannerService
         TravelPlannerFilters filters,
         DateTimeOffset now,
         DateTimeOffset? sessionEnd,
+        int? plannerBuyCapacity,
         IReadOnlyDictionary<string, int>? reservedCurrentStock = null)
     {
         return destinations
@@ -162,7 +170,8 @@ public static class TravelPlannerService
                     return null;
                 }
 
-                TravelItem adjustedItem = AdjustForReservedStock(destination, item, reservedCurrentStock);
+                TravelItem adjustedItem = ApplyPlannerCapacity(item, plannerBuyCapacity);
+                adjustedItem = AdjustForReservedStock(destination, adjustedItem, reservedCurrentStock);
                 DroqsForecastInfo? forecastInfo = GetForecastInfo(forecastSnapshot, destination, adjustedItem);
                 return BuildCandidate(
                     destination,
@@ -343,6 +352,7 @@ public static class TravelPlannerService
             timingText,
             availabilityText,
             confidenceText,
+            BuildStrategyExplanation(strategy, tripType, usesForecast, profitPerHour, energyWaste, nerveWaste),
             usesForecast,
             energyWaste,
             nerveWaste,
@@ -424,6 +434,7 @@ public static class TravelPlannerService
             BuildForecastTimingText(match.Window, timing),
             BuildForecastSafetyText(match.Window),
             BuildForecastConfidenceText(forecastInfo, match.Window),
+            BuildStrategyExplanation(strategy, ForecastTripType, usesForecast: true, profitPerHour, energyWaste, nerveWaste),
             true,
             energyWaste,
             nerveWaste,
@@ -647,6 +658,45 @@ public static class TravelPlannerService
         };
     }
 
+    private static TravelItem ApplyPlannerCapacity(TravelItem item, int? plannerBuyCapacity)
+    {
+        if (plannerBuyCapacity is null || plannerBuyCapacity.Value <= 0 || plannerBuyCapacity.Value == item.BuyCapacity)
+        {
+            return item;
+        }
+
+        return item with
+        {
+            BuyCapacity = plannerBuyCapacity.Value
+        };
+    }
+
+    private static string BuildStrategyExplanation(
+        TravelPlannerStrategy strategy,
+        string tripType,
+        bool usesForecast,
+        decimal profitPerHour,
+        bool energyWaste,
+        bool nerveWaste)
+    {
+        string strategyText = strategy switch
+        {
+            TravelPlannerStrategy.Conservative => "Conservative strategy favors safer timing, confidence, and avoiding capped bars.",
+            TravelPlannerStrategy.Aggressive => "Aggressive strategy prioritizes the highest profit per hour.",
+            _ => "Balanced strategy prioritizes profit per hour, then avoids energy or nerve waste when possible."
+        };
+        string timingText = usesForecast
+            ? "Uses a Droqs forecast window."
+            : tripType == CurrentStockTripType
+                ? "Uses currently available stock."
+                : "Uses the next expected restock.";
+        string wasteText = energyWaste || nerveWaste
+            ? "Bars may cap during the round trip."
+            : "No energy or nerve cap is expected.";
+
+        return $"Chosen because: ${profitPerHour:N0}/h. {strategyText} {timingText} {wasteText}";
+    }
+
     private static bool IsItemAllowed(TravelItem item, TravelPlannerFilters filters)
     {
         if (!string.IsNullOrWhiteSpace(filters.TargetItemQuery)
@@ -693,7 +743,7 @@ public static class TravelPlannerService
             : availability.Replace('_', ' ');
     }
 
-    private static string BuildReservationKey(string destinationCode, string itemName)
+    public static string BuildReservationKey(string destinationCode, string itemName)
     {
         return $"{destinationCode}:{itemName}";
     }

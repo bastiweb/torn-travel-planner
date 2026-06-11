@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private DateTimeOffset _plannerWindowEnd;
     private string? _lastShownError;
     private DateTimeOffset? _lastUpdateCheckAt;
+    private readonly Dictionary<string, int> _manualBoughtReservations = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isApplyingPlannerPreset;
     private IReadOnlyList<TravelDestination> _allDestinations = Array.Empty<TravelDestination>();
 
     public MainWindow()
@@ -47,6 +49,8 @@ public partial class MainWindow : Window
         SelectPlannerStrategy(_plannerStrategy);
         PlannerStrategyBox.SelectionChanged += PlannerStrategyBox_SelectionChanged;
         InitializePlannerWindow();
+        InitializePlannerPresets();
+        InitializePlannerCapacityProfile();
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.TornApiKey)
             ? "No key saved"
             : "Key saved";
@@ -278,17 +282,32 @@ public partial class MainWindow : Window
 
     private void PlannerStrategyBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isApplyingPlannerPreset)
+        {
+            return;
+        }
+
         _plannerStrategy = GetSelectedPlannerStrategy();
         UpdateTravelPlanner();
     }
 
     private void PlannerWindow_Changed(object sender, RoutedEventArgs e)
     {
+        if (_isApplyingPlannerPreset)
+        {
+            return;
+        }
+
         UpdateTravelPlanner();
     }
 
     private void PlannerFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (_isApplyingPlannerPreset)
+        {
+            return;
+        }
+
         UpdateTravelPlanner();
     }
 
@@ -307,6 +326,83 @@ public partial class MainWindow : Window
     private void PlannerUseNowButton_Click(object sender, RoutedEventArgs e)
     {
         SetPlannerWindow(DateTimeOffset.Now, DateTimeOffset.Now.Add(DefaultPlannerWindowDuration));
+        UpdateTravelPlanner();
+    }
+
+    private void PlannerCapacityProfileBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isApplyingPlannerPreset)
+        {
+            return;
+        }
+
+        ApplySelectedPlannerCapacityProfile();
+        UpdateTravelPlanner();
+    }
+
+    private void ApplyPlannerPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PlannerPresetBox.SelectedItem is PlannerPreset preset)
+        {
+            ApplyPlannerPreset(preset);
+        }
+    }
+
+    private void SavePlannerPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        string name = PlannerPresetNameBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            PlannerWindowSummaryText.Text = "Enter a preset name before saving.";
+            return;
+        }
+
+        if (!TryReadPlannerCapacity(out int? capacity, out string? capacityError))
+        {
+            PlannerWindowSummaryText.Text = capacityError ?? "Invalid capacity.";
+            return;
+        }
+
+        if (!TryReadPlannerWindow(out DateTimeOffset windowStart, out DateTimeOffset windowEnd, out string? validationError))
+        {
+            PlannerWindowSummaryText.Text = validationError ?? "Invalid active window.";
+            return;
+        }
+
+        PlannerPreset preset = new(
+            name,
+            PlannerTargetItemBox.Text.Trim(),
+            SplitPlannerFilterText(PlannerExcludedItemsBox.Text),
+            GetPlannerExcludedCountryCodes().OrderBy(code => code, StringComparer.OrdinalIgnoreCase).ToList(),
+            _plannerStrategy,
+            capacity ?? 0,
+            Math.Clamp((int)Math.Ceiling(windowEnd.Subtract(windowStart).TotalHours), 1, 24));
+
+        List<PlannerPreset> presets = _settings.PlannerPresets
+            .Where(existing => !string.Equals(existing.Name, preset.Name, StringComparison.CurrentCultureIgnoreCase))
+            .Append(preset)
+            .OrderBy(existing => existing.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        _settings = _settings with
+        {
+            PlannerPresets = presets
+        };
+        _settingsService.Save(_settings);
+        RefreshPlannerPresetList(preset.Name);
+        PlannerWindowSummaryText.Text = $"Preset \"{preset.Name}\" saved.";
+    }
+
+    private void MarkTripBoughtButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not TravelPlanCandidate candidate || candidate.Stock <= 0)
+        {
+            return;
+        }
+
+        string key = TravelPlannerService.BuildReservationKey(candidate.DestinationCode, candidate.ItemName);
+        _manualBoughtReservations[key] = _manualBoughtReservations.TryGetValue(key, out int reserved)
+            ? reserved + candidate.BuyAmount
+            : candidate.BuyAmount;
         UpdateTravelPlanner();
     }
 
@@ -332,6 +428,10 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         _travelRefreshService.SetBuyCapacity(buyCapacity);
         BuyCapacityBox.Text = buyCapacity > 0 ? buyCapacity.ToString("N0") : string.Empty;
+        if (PlannerCapacityProfileBox.SelectedIndex == 0)
+        {
+            PlannerCapacityBox.Text = BuyCapacityBox.Text;
+        }
 
         await _travelRefreshService.RefreshNowAsync();
     }
@@ -538,6 +638,15 @@ public partial class MainWindow : Window
         {
             PlannerWindowSummaryText.Text = validationError ?? "Invalid active window.";
             TravelPlannerCards.ItemsSource = Array.Empty<TravelPlanCard>();
+            TravelPlannerTimeline.ItemsSource = Array.Empty<TravelPlanTimelineEntry>();
+            return;
+        }
+
+        if (!TryReadPlannerCapacity(out int? plannerCapacity, out string? capacityError))
+        {
+            PlannerWindowSummaryText.Text = capacityError ?? "Invalid carry capacity.";
+            TravelPlannerCards.ItemsSource = Array.Empty<TravelPlanCard>();
+            TravelPlannerTimeline.ItemsSource = Array.Empty<TravelPlanTimelineEntry>();
             return;
         }
 
@@ -552,9 +661,13 @@ public partial class MainWindow : Window
             GetPlannerFilters(),
             DateTimeOffset.Now,
             windowStart,
-            windowEnd);
+            windowEnd,
+            plannerCapacity,
+            _manualBoughtReservations);
 
         PlannerWindowSummaryText.Text = plan.SummaryText;
+        UpdatePlannerWalletReadiness(plan);
+        TravelPlannerTimeline.ItemsSource = BuildTimelineEntries(plan);
         TravelPlannerCards.ItemsSource = plan.Trips.Count == 0
             ? new[] { new TravelPlanCard("No session route", plan.StatusText, null) }
             : plan.Trips
@@ -838,6 +951,97 @@ public partial class MainWindow : Window
         return TravelPlannerStrategy.Balanced;
     }
 
+    private void InitializePlannerPresets()
+    {
+        RefreshPlannerPresetList(_settings.PlannerPresets.FirstOrDefault()?.Name);
+    }
+
+    private void RefreshPlannerPresetList(string? selectedName)
+    {
+        PlannerPresetBox.ItemsSource = _settings.PlannerPresets;
+        PlannerPresetBox.SelectedItem = _settings.PlannerPresets.FirstOrDefault(preset =>
+            string.Equals(preset.Name, selectedName, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    private void InitializePlannerCapacityProfile()
+    {
+        PlannerCapacityProfileBox.SelectedIndex = 0;
+        ApplySelectedPlannerCapacityProfile();
+    }
+
+    private void ApplySelectedPlannerCapacityProfile()
+    {
+        if (PlannerCapacityProfileBox.SelectedItem is not ComboBoxItem item
+            || item.Tag is not string tag
+            || !int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out int capacity))
+        {
+            PlannerCapacityBox.Text = _settings.BuyCapacity > 0 ? _settings.BuyCapacity.ToString("N0") : string.Empty;
+            return;
+        }
+
+        PlannerCapacityBox.Text = capacity > 0
+            ? capacity.ToString("N0")
+            : _settings.BuyCapacity > 0 ? _settings.BuyCapacity.ToString("N0") : string.Empty;
+    }
+
+    private bool TryReadPlannerCapacity(out int? capacity, out string? validationError)
+    {
+        validationError = null;
+        string value = PlannerCapacityBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            capacity = _settings.BuyCapacity > 0 ? _settings.BuyCapacity : null;
+            return true;
+        }
+
+        if (!int.TryParse(value, NumberStyles.Integer | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out int parsed)
+            || parsed < 0)
+        {
+            capacity = null;
+            validationError = "Carry capacity must be a positive number or empty.";
+            return false;
+        }
+
+        capacity = parsed > 0 ? parsed : null;
+        return true;
+    }
+
+    private void ApplyPlannerPreset(PlannerPreset preset)
+    {
+        _isApplyingPlannerPreset = true;
+        try
+        {
+            PlannerTargetItemBox.Text = preset.TargetItemQuery;
+            PlannerExcludedItemsBox.Text = string.Join(", ", preset.ExcludedItemQueries);
+            SetPlannerExcludedCountries(preset.ExcludedCountryCodes);
+            SelectPlannerStrategy(preset.Strategy);
+            _plannerStrategy = preset.Strategy;
+            PlannerCapacityBox.Text = preset.CarryCapacity > 0
+                ? preset.CarryCapacity.ToString("N0")
+                : _settings.BuyCapacity > 0 ? _settings.BuyCapacity.ToString("N0") : string.Empty;
+            SetPlannerWindow(DateTimeOffset.Now, DateTimeOffset.Now.Add(TimeSpan.FromHours(Math.Clamp(preset.ActiveWindowHours, 1, 24))));
+            PlannerPresetNameBox.Text = preset.Name;
+        }
+        finally
+        {
+            _isApplyingPlannerPreset = false;
+        }
+
+        UpdateTravelPlanner();
+    }
+
+    private void SetPlannerExcludedCountries(IReadOnlyList<string> countryCodes)
+    {
+        HashSet<string> excluded = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (CheckBox checkBox in PlannerExcludedCountryPanel.Children.OfType<CheckBox>())
+        {
+            if (checkBox.Tag is string tag)
+            {
+                checkBox.IsChecked = excluded.Contains(tag);
+            }
+        }
+    }
+
     private void InitializePlannerWindow()
     {
         SetPlannerWindow(DateTimeOffset.Now, DateTimeOffset.Now.Add(DefaultPlannerWindowDuration));
@@ -910,13 +1114,52 @@ public partial class MainWindow : Window
     {
         string targetItem = PlannerTargetItemBox.Text.Trim();
         IReadOnlyList<string> excludedItems = SplitPlannerFilterText(PlannerExcludedItemsBox.Text);
-        HashSet<string> excludedCountryCodes = PlannerExcludedCountryPanel.Children
+        HashSet<string> excludedCountryCodes = GetPlannerExcludedCountryCodes();
+
+        return new TravelPlannerFilters(targetItem, excludedItems, excludedCountryCodes);
+    }
+
+    private HashSet<string> GetPlannerExcludedCountryCodes()
+    {
+        return PlannerExcludedCountryPanel.Children
             .OfType<CheckBox>()
             .Where(checkBox => checkBox.IsChecked == true && checkBox.Tag is string)
             .Select(checkBox => ((string)checkBox.Tag).ToLowerInvariant())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
-        return new TravelPlannerFilters(targetItem, excludedItems, excludedCountryCodes);
+    private IReadOnlyList<TravelPlanTimelineEntry> BuildTimelineEntries(TravelPlannerSessionPlan plan)
+    {
+        return plan.Trips
+            .Select((trip, index) => new TravelPlanTimelineEntry(
+                $"Trip {index + 1}",
+                $"{trip.DestinationText} - {trip.ItemName}",
+                $"Depart {trip.DepartText}",
+                $"Arrive {trip.ArriveText}",
+                $"Return {trip.ReturnText}",
+                $"${trip.ProfitPerHourText}/h | ${trip.ProfitText}",
+                trip.WalletReadinessText))
+            .ToList();
+    }
+
+    private void UpdatePlannerWalletReadiness(TravelPlannerSessionPlan plan)
+    {
+        if (_moneyStatus is null)
+        {
+            PlannerWalletReadinessText.Text = $"Bring ${plan.TotalCashNeeded:N0} | Wallet unavailable | Budget limit {_settings.MaxSpendPercent}%";
+            return;
+        }
+
+        decimal spendLimit = _moneyStatus.Total * _settings.MaxSpendPercent / 100m;
+        decimal walletShortfall = Math.Max(0, plan.TotalCashNeeded - _moneyStatus.Wallet);
+        string walletText = walletShortfall <= 0
+            ? "Wallet ready"
+            : $"Wallet short by ${walletShortfall:N0}";
+        string limitText = plan.TotalCashNeeded <= spendLimit
+            ? $"Within {_settings.MaxSpendPercent}% limit"
+            : $"Above {_settings.MaxSpendPercent}% limit";
+
+        PlannerWalletReadinessText.Text = $"Bring ${plan.TotalCashNeeded:N0} | {walletText} | {limitText}";
     }
 
     private static IReadOnlyList<string> SplitPlannerFilterText(string value)

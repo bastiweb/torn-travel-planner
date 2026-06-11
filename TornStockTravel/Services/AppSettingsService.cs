@@ -36,6 +36,7 @@ public sealed class AppSettingsService
                 storedSettings?.MaxSpendPercent ?? AppSettings.DefaultMaxSpendPercent);
             RestockAvailabilityMode availabilityMode = NormalizeAvailabilityMode(
                 storedSettings?.RestockAvailabilityMode);
+            IReadOnlyList<PlannerPreset> plannerPresets = NormalizePlannerPresets(storedSettings?.PlannerPresets);
 
             if (!string.IsNullOrWhiteSpace(storedSettings?.ProtectedTornApiKey))
             {
@@ -48,7 +49,8 @@ public sealed class AppSettingsService
                     availabilityMode,
                     storedSettings.LastSeenVersion,
                     storedSettings.PendingReleaseVersion,
-                    storedSettings.PendingReleaseNotes);
+                    storedSettings.PendingReleaseNotes,
+                    plannerPresets);
             }
 
             return new AppSettings(
@@ -60,7 +62,8 @@ public sealed class AppSettingsService
                 availabilityMode,
                 storedSettings?.LastSeenVersion,
                 storedSettings?.PendingReleaseVersion,
-                storedSettings?.PendingReleaseNotes);
+                storedSettings?.PendingReleaseNotes,
+                plannerPresets);
         }
         catch
         {
@@ -80,7 +83,15 @@ public sealed class AppSettingsService
             settings.RestockAvailabilityMode.ToString(),
             settings.LastSeenVersion,
             settings.PendingReleaseVersion,
-            settings.PendingReleaseNotes);
+            settings.PendingReleaseNotes,
+            settings.PlannerPresets.Select(preset => new StoredPlannerPreset(
+                preset.Name,
+                preset.TargetItemQuery,
+                preset.ExcludedItemQueries.ToList(),
+                preset.ExcludedCountryCodes.ToList(),
+                preset.Strategy.ToString(),
+                preset.CarryCapacity,
+                preset.ActiveWindowHours)).ToList());
         string json = JsonSerializer.Serialize(storedSettings, JsonOptions.Pretty);
         File.WriteAllText(_settingsPath, json);
     }
@@ -120,6 +131,48 @@ public sealed class AppSettingsService
             ? parsed
             : AppSettings.DefaultRestockAvailabilityMode;
     }
+
+    private static IReadOnlyList<PlannerPreset> NormalizePlannerPresets(List<StoredPlannerPreset>? storedPresets)
+    {
+        List<PlannerPreset> presets = storedPresets?
+            .Where(preset => !string.IsNullOrWhiteSpace(preset.Name))
+            .Select(preset => new PlannerPreset(
+                preset.Name!.Trim(),
+                preset.TargetItemQuery?.Trim() ?? string.Empty,
+                (preset.ExcludedItemQueries ?? new List<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim())
+                    .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                    .ToList(),
+                (preset.ExcludedCountryCodes ?? new List<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim().ToLowerInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                Enum.TryParse(preset.Strategy, ignoreCase: true, out TravelPlannerStrategy strategy)
+                    ? strategy
+                    : TravelPlannerStrategy.Balanced,
+                Math.Max(0, preset.CarryCapacity ?? 0),
+                Math.Clamp(preset.ActiveWindowHours ?? 12, 1, 24)))
+            .GroupBy(preset => preset.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(group => group.Last())
+            .OrderBy(preset => preset.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList()
+            ?? new List<PlannerPreset>();
+
+        return presets.Count > 0 ? presets : GetDefaultPlannerPresets();
+    }
+
+    internal static IReadOnlyList<PlannerPreset> GetDefaultPlannerPresets()
+    {
+        return new[]
+        {
+            new PlannerPreset("Balanced session", string.Empty, Array.Empty<string>(), Array.Empty<string>(), TravelPlannerStrategy.Balanced, 0, 12),
+            new PlannerPreset("Short trips", string.Empty, Array.Empty<string>(), new[] { "haw", "uni", "arg", "swi", "jap", "chi", "uae", "sou" }, TravelPlannerStrategy.Balanced, 0, 4),
+            new PlannerPreset("No UAE / South Africa", string.Empty, Array.Empty<string>(), new[] { "uae", "sou" }, TravelPlannerStrategy.Balanced, 0, 12),
+            new PlannerPreset("High confidence", string.Empty, Array.Empty<string>(), Array.Empty<string>(), TravelPlannerStrategy.Conservative, 0, 12)
+        };
+    }
 }
 
 public sealed record AppSettings(
@@ -131,7 +184,8 @@ public sealed record AppSettings(
     RestockAvailabilityMode RestockAvailabilityMode,
     string? LastSeenVersion,
     string? PendingReleaseVersion,
-    string? PendingReleaseNotes)
+    string? PendingReleaseNotes,
+    IReadOnlyList<PlannerPreset> PlannerPresets)
 {
     public const int DefaultRefreshIntervalMinutes = 5;
     public const int MinimumRefreshIntervalMinutes = 1;
@@ -142,7 +196,17 @@ public sealed record AppSettings(
     public const RestockAvailabilityMode DefaultRestockAvailabilityMode = RestockAvailabilityMode.Conservative;
 
     public AppSettings(string TornApiKey)
-        : this(TornApiKey, new Dictionary<int, decimal>(), 0, DefaultRefreshIntervalMinutes, DefaultMaxSpendPercent, DefaultRestockAvailabilityMode, null, null, null)
+        : this(
+            TornApiKey,
+            new Dictionary<int, decimal>(),
+            0,
+            DefaultRefreshIntervalMinutes,
+            DefaultMaxSpendPercent,
+            DefaultRestockAvailabilityMode,
+            null,
+            null,
+            null,
+            AppSettingsService.GetDefaultPlannerPresets())
     {
     }
 }
@@ -157,4 +221,14 @@ internal sealed record StoredSettings(
     string? RestockAvailabilityMode,
     string? LastSeenVersion,
     string? PendingReleaseVersion,
-    string? PendingReleaseNotes);
+    string? PendingReleaseNotes,
+    List<StoredPlannerPreset>? PlannerPresets);
+
+internal sealed record StoredPlannerPreset(
+    string? Name,
+    string? TargetItemQuery,
+    List<string>? ExcludedItemQueries,
+    List<string>? ExcludedCountryCodes,
+    string? Strategy,
+    int? CarryCapacity,
+    int? ActiveWindowHours);

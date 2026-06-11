@@ -23,6 +23,21 @@ public sealed record TravelPlannerFilters(
         new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 }
 
+public sealed record PlannerPreset(
+    string Name,
+    string TargetItemQuery,
+    IReadOnlyList<string> ExcludedItemQueries,
+    IReadOnlyList<string> ExcludedCountryCodes,
+    TravelPlannerStrategy Strategy,
+    int CarryCapacity,
+    int ActiveWindowHours)
+{
+    public override string ToString()
+    {
+        return Name;
+    }
+}
+
 public sealed record TravelPlannerSessionPlan(
     DateTimeOffset WindowStart,
     DateTimeOffset WindowEnd,
@@ -66,6 +81,7 @@ public sealed record TravelPlanCandidate(
     string RestockText,
     string StockoutText,
     string ConfidenceText,
+    string StrategyExplanationText,
     bool UsesForecast,
     bool EnergyWaste,
     bool NerveWaste,
@@ -103,6 +119,12 @@ public sealed record TravelPlanCandidate(
         : HasEnoughWalletCash
             ? "Wallet covers this trip"
             : $"Withdraw ${WalletShortfall:N0}";
+
+    public string WalletReadinessText => Wallet is null
+        ? $"Bring ${CashNeeded:N0} | Wallet unavailable | Within {MaxSpendPercent}% limit"
+        : HasEnoughWalletCash
+            ? $"Bring ${CashNeeded:N0} | Wallet ready | Within {MaxSpendPercent}% limit"
+            : $"Bring ${CashNeeded:N0} | Wallet short by ${WalletShortfall:N0} | Within {MaxSpendPercent}% limit";
 
     public string WasteText => (EnergyWaste, NerveWaste) switch
     {
@@ -174,5 +196,20 @@ public sealed record TravelPlanCard(
 
     public string CashStatusText => Candidate?.CashStatusText ?? "-";
 
+    public string WalletReadinessText => Candidate?.WalletReadinessText ?? "-";
+
+    public string StrategyExplanationText => Candidate?.StrategyExplanationText ?? "-";
+
+    public bool CanMarkBought => Candidate is not null && Candidate.Stock > 0 && Candidate.BuyAmount > 0;
+
     public string Reason => Candidate?.Reason ?? EmptyText;
 }
+
+public sealed record TravelPlanTimelineEntry(
+    string Title,
+    string ItemText,
+    string DepartText,
+    string ArriveText,
+    string ReturnText,
+    string ProfitText,
+    string WalletText);
