@@ -8,6 +8,8 @@ Torn API keys are entered in the app and stored locally under the current Window
 
 ## Development
 
+Requires the .NET 10 SDK.
+
 ```powershell
 dotnet run --project .\TornStockTravel\TornStockTravel.csproj
 ```
@@ -56,5 +58,5 @@ dotnet publish .\TornStockTravel\TornStockTravel.csproj -c Release -r win-x64 --
 The standalone app will be created under:
 
 ```text
-TornStockTravel\bin\Release\net6.0-windows\win-x64\publish\
+TornStockTravel\bin\Release\net10.0-windows\win-x64\publish\
 ```
