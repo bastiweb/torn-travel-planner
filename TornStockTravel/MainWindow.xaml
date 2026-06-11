@@ -854,6 +854,13 @@
                                                    Foreground="#FDBA74"
                                                    FontSize="14"
                                                    FontWeight="Bold" />
+                                        <TextBlock Text="{Binding TrendSummaryText, Mode=OneWay}"
+                                                   ToolTip="{Binding TrendDetailsText, Mode=OneWay}"
+                                                   Foreground="#A7F3D0"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,4,0,0" />
                                       </StackPanel>
                                       <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                                         <TextBlock Text="Round Trip"

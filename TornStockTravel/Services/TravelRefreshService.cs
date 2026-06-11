@@ -18,6 +18,7 @@ public sealed class TravelRefreshService : IDisposable
     private readonly DroqsRestockClient _droqsRestockClient;
     private readonly DroqsForecastClient _droqsForecastClient;
     private readonly TravelCacheService _cacheService;
+    private readonly HistoryDatabaseService _historyDatabaseService;
     private readonly DispatcherTimer _timer;
     private string _tornApiKey;
     private IReadOnlyDictionary<int, decimal> _bazaarPrices;
@@ -46,6 +47,7 @@ public sealed class TravelRefreshService : IDisposable
         _droqsRestockClient = new DroqsRestockClient();
         _droqsForecastClient = new DroqsForecastClient();
         _cacheService = new TravelCacheService();
+        _historyDatabaseService = new HistoryDatabaseService();
         _tornApiKey = tornApiKey;
         _bazaarPrices = bazaarPrices ?? new Dictionary<int, decimal>();
         _buyCapacity = buyCapacity;
@@ -206,10 +208,25 @@ public sealed class TravelRefreshService : IDisposable
             TornBarsStatus? barsStatus = await barsStatusTask;
             TornCooldownStatus? cooldownStatus = await cooldownStatusTask;
             IReadOnlyDictionary<string, DroqsRestockInfo> restocks = await restocksTask;
+            DateTimeOffset refreshedAt = DateTimeOffset.Now;
             DroqsForecastSnapshot? forecast = await forecastTask;
+            IReadOnlyList<TravelDestination> historyDestinations =
+                TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, _availabilityMode, restocks, includeUnprofitableItems: true);
             IReadOnlyList<TravelDestination> destinations =
                 TravelDashboardParser.Parse(data, itemDetails, inventory, _bazaarPrices, _buyCapacity, _availabilityMode, restocks);
-            DateTimeOffset refreshedAt = DateTimeOffset.Now;
+
+            try
+            {
+                await Task.Run(() => _historyDatabaseService.SaveRefreshSnapshot(historyDestinations, refreshedAt));
+                IReadOnlyDictionary<string, HistoryTrendInfo> trendLookup =
+                    await Task.Run(() => _historyDatabaseService.BuildTrendLookup(destinations, refreshedAt));
+                destinations = TrendAnalysisService.ApplyTrends(destinations, trendLookup);
+            }
+            catch (Exception ex)
+            {
+                AppLogService.Warning($"History database update failed: {ex.Message}");
+                warnings.Add($"History database update failed: {ex.Message}");
+            }
 
             _cacheService.Save(new TravelCacheSnapshot(
                 refreshedAt,

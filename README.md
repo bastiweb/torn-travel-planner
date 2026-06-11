@@ -16,6 +16,16 @@ dotnet run --project .\TornStockTravel\TornStockTravel.csproj
 
 The app fetches YATA, Torn, and DroqsDB API data on startup and then refreshes on the configured interval.
 
+## Local history database
+
+Refresh snapshots are stored locally in SQLite under:
+
+```text
+%AppData%\TornStockTravel\torn-stock-history.db
+```
+
+The database stores stock, restock, market value, bazaar price, profit, and owned-item snapshots. This local history powers trend badges in the Stock Overview and provides the basis for future restock, sellout, and price prediction charts.
+
 ## Discord webhook alerts
 
 Discord webhook alerts are optional. They use the same alert events as the local Windows reminders.

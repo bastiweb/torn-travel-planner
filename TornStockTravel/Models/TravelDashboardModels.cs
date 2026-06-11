@@ -14,7 +14,8 @@ public sealed record TravelItem(
     TimeSpan? FlightDuration,
     int BuyCapacity,
     RestockAvailabilityMode AvailabilityMode,
-    DroqsRestockInfo? RestockInfo)
+    DroqsRestockInfo? RestockInfo,
+    HistoryTrendInfo? HistoryTrend = null)
 {
     public decimal? EffectiveValue => BazaarPrice ?? MarketValue;
 
@@ -76,6 +77,10 @@ public sealed record TravelItem(
     public string ProfitPerHourText => ProfitPerHour is null ? "-" : ProfitPerHour.Value.ToString("N0");
 
     public string OwnedValueText => OwnedValue is null ? "-" : OwnedValue.Value.ToString("N0");
+
+    public string TrendSummaryText => HistoryTrend?.SummaryText ?? "History: collecting data";
+
+    public string TrendDetailsText => HistoryTrend?.DetailsText ?? "No historical snapshots for this item yet.";
 
     public string RestockConfidenceText => RestockInfo?.Confidence ?? "-";
 

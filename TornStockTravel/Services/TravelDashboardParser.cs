@@ -33,7 +33,8 @@ public static class TravelDashboardParser
         IReadOnlyDictionary<int, decimal>? bazaarPrices = null,
         int buyCapacity = 0,
         RestockAvailabilityMode availabilityMode = RestockAvailabilityMode.Conservative,
-        IReadOnlyDictionary<string, DroqsRestockInfo>? restocks = null)
+        IReadOnlyDictionary<string, DroqsRestockInfo>? restocks = null,
+        bool includeUnprofitableItems = false)
     {
         if (data.ValueKind == JsonValueKind.Object
             && TryGetProperty(data, "stocks", out JsonElement stocksElement)
@@ -71,7 +72,7 @@ public static class TravelDashboardParser
                 code,
                 destinationName,
                 items
-                    .Where(item => item.UnitProfit > 0)
+                    .Where(item => includeUnprofitableItems || item.UnitProfit > 0)
                     .OrderByDescending(item => item.ProfitPerHour ?? decimal.MinValue)
                     .ThenByDescending(item => item.Profit ?? decimal.MinValue)
                     .ThenByDescending(item => item.Quantity)
