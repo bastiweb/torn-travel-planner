@@ -211,9 +211,181 @@
                          TextWrapping="Wrap" />
             </Grid>
 
+            <Border Background="#0B1120"
+                    BorderBrush="#243044"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="12"
+                    Margin="0,4,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,12,0">
+                  <TextBlock Style="{StaticResource LabelTextStyle}" Text="Prediction" />
+                  <TextBlock x:Name="ItemPredictionSourceText"
+                             Foreground="#5EEAD4"
+                             FontSize="14"
+                             FontWeight="Bold"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="ItemPredictionSamplesText"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                  <TextBlock Style="{StaticResource LabelTextStyle}" Text="Local history" />
+                  <TextBlock x:Name="ItemPredictionAvailabilityText"
+                             Foreground="#CBD5E1"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="ItemPredictionStockoutText"
+                             Foreground="#FDBA74"
+                             FontSize="12"
+                             FontWeight="Bold"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="ItemPredictionDeltaText"
+                             Foreground="#94A3B8"
+                             FontSize="11"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                  <TextBlock Style="{StaticResource LabelTextStyle}" Text="Reason" />
+                  <TextBlock x:Name="ItemPredictionRangeText"
+                             Foreground="#CBD5E1"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="ItemPredictionExplanationText"
+                             Foreground="#94A3B8"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
           </StackPanel>
         </StackPanel>
       </Border>
+
+      <Grid Margin="0,0,0,18">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Margin="0,0,8,0">
+          <TextBlock Text="Fast sellout items"
+                     Foreground="#F8FAFC"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     Margin="0,0,0,8" />
+          <TextBlock x:Name="FastSelloutEmptyText"
+                     Foreground="#94A3B8"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     Text="More sellout events are needed before local speed can be ranked."
+                     Visibility="Collapsed"
+                     Margin="0,0,0,10" />
+          <ItemsControl x:Name="FastSelloutItemsList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#111827"
+                        BorderBrush="#334155"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10"
+                        Margin="0,0,0,8">
+                  <StackPanel>
+                    <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                               Foreground="#F8FAFC"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DestinationText, Mode=OneWay}"
+                               Foreground="#93C5FD"
+                               FontSize="12"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding MedianText, Mode=OneWay}"
+                               Foreground="#FDBA74"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding RangeText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SampleText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+          <TextBlock Text="API vs local disagreements"
+                     Foreground="#F8FAFC"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     Margin="0,0,0,8" />
+          <TextBlock x:Name="PredictionDisagreementsEmptyText"
+                     Foreground="#94A3B8"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     Text="No meaningful API/local stockout disagreements found yet."
+                     Visibility="Collapsed"
+                     Margin="0,0,0,10" />
+          <ItemsControl x:Name="PredictionDisagreementsList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#111827"
+                        BorderBrush="#334155"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10"
+                        Margin="0,0,0,8">
+                  <StackPanel>
+                    <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                               Foreground="#F8FAFC"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DestinationText, Mode=OneWay}"
+                               Foreground="#93C5FD"
+                               FontSize="12"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding DeltaText, Mode=OneWay}"
+                               Foreground="#FDBA74"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding ApiText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding LocalText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding BlendedText, Mode=OneWay}"
+                               Foreground="#5EEAD4"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Grid>
 
       <TextBlock Text="Latest top opportunities"
                  Foreground="#F8FAFC"

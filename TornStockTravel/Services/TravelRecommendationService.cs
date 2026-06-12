@@ -60,9 +60,10 @@ public static class TravelRecommendationService
         {
             departAt = readyAt;
             DateTimeOffset projectedArrival = departAt.Add(item.FlightDuration.Value);
+            DateTimeOffset? stockoutEstimate = GetEffectiveStockoutEstimate(item);
 
-            if (item.StockoutEstimateUtc is not null
-                && projectedArrival > item.StockoutEstimateUtc.Value)
+            if (stockoutEstimate is not null
+                && projectedArrival > stockoutEstimate.Value)
             {
                 return null;
             }
@@ -74,7 +75,9 @@ public static class TravelRecommendationService
         else if (item.RestockEstimateUtc is not null)
         {
             DateTimeOffset targetArrival = item.RestockEstimateUtc.Value.Subtract(RestockWindowTolerance);
-            DateTimeOffset latestArrival = item.RestockWindowEndUtc ?? item.RestockEstimateUtc.Value.Add(RestockWindowTolerance);
+            DateTimeOffset latestArrival = GetEffectiveStockoutEstimate(item)
+                ?? item.RestockWindowEndUtc
+                ?? item.RestockEstimateUtc.Value.Add(RestockWindowTolerance);
             DateTimeOffset latestDeparture = latestArrival.Subtract(item.FlightDuration.Value);
 
             if (readyAt > latestDeparture)
@@ -113,6 +116,11 @@ public static class TravelRecommendationService
     private static DateTimeOffset Max(DateTimeOffset first, DateTimeOffset second)
     {
         return first >= second ? first : second;
+    }
+
+    private static DateTimeOffset? GetEffectiveStockoutEstimate(TravelItem item)
+    {
+        return item.Prediction?.PredictedStockoutUtc ?? item.StockoutEstimateUtc;
     }
 
     private static string FormatAvailabilityMode(RestockAvailabilityMode mode)

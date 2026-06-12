@@ -53,6 +53,16 @@ public partial class HistoryTrendsView : System.Windows.Controls.UserControl
         UpcomingRestocksEmptyText.Visibility = overview.UpcomingRestocks.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+
+        FastSelloutItemsList.ItemsSource = overview.FastSelloutItems;
+        FastSelloutEmptyText.Visibility = overview.FastSelloutItems.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        PredictionDisagreementsList.ItemsSource = overview.PredictionDisagreements;
+        PredictionDisagreementsEmptyText.Visibility = overview.PredictionDisagreements.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     public void SetItemDetail(HistoryItemDetail? detail)
@@ -80,6 +90,13 @@ public partial class HistoryTrendsView : System.Windows.Controls.UserControl
         ItemLatestEffectiveRun.Text = detail.LatestEffectiveText;
         ItemLatestUnitProfitRun.Text = detail.LatestUnitProfitText;
         ItemLatestConfidenceText.Text = detail.LatestConfidenceText;
+        ItemPredictionSourceText.Text = detail.PredictionSourceText;
+        ItemPredictionAvailabilityText.Text = detail.PredictionAvailabilityText;
+        ItemPredictionStockoutText.Text = detail.PredictionStockoutText;
+        ItemPredictionDeltaText.Text = detail.PredictionDeltaText;
+        ItemPredictionSamplesText.Text = detail.PredictionSampleText;
+        ItemPredictionRangeText.Text = detail.PredictionRangeText;
+        ItemPredictionExplanationText.Text = detail.PredictionExplanationText;
     }
 
     private void HistoryItemBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

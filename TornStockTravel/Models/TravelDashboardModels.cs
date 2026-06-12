@@ -15,7 +15,8 @@ public sealed record TravelItem(
     int BuyCapacity,
     RestockAvailabilityMode AvailabilityMode,
     DroqsRestockInfo? RestockInfo,
-    HistoryTrendInfo? HistoryTrend = null)
+    HistoryTrendInfo? HistoryTrend = null,
+    ItemPrediction? Prediction = null)
 {
     public decimal? EffectiveValue => BazaarPrice ?? MarketValue;
 
@@ -36,6 +37,8 @@ public sealed record TravelItem(
     public DateTimeOffset? RestockEstimateUtc => RestockInfo?.EstimatedAtUtc ?? ParseTornCityTime(RestockInfo?.EstimatedAtTct);
 
     public DateTimeOffset? StockoutEstimateUtc => RestockInfo?.StockoutAtUtc ?? ParseTornCityTime(RestockInfo?.StockoutAtTct);
+
+    public DateTimeOffset? EffectiveStockoutEstimateUtc => Prediction?.PredictedStockoutUtc ?? StockoutEstimateUtc;
 
     public TimeSpan RestockArrivalLeadTime => TimeSpan.FromMinutes(2);
 
@@ -82,6 +85,12 @@ public sealed record TravelItem(
 
     public string TrendDetailsText => HistoryTrend?.DetailsText ?? "No historical snapshots for this item yet.";
 
+    public string PredictionSummaryText => Prediction?.SourceText ?? "Prediction: collecting data";
+
+    public string PredictionDetailsText => Prediction is null
+        ? "No local prediction yet."
+        : $"{Prediction.AvailabilityText}. {Prediction.StockoutText}. {Prediction.SampleText}. {Prediction.ApiLocalDeltaText}.";
+
     public string RestockConfidenceText => RestockInfo?.Confidence ?? "-";
 
     public string RestockEstimateText => FormatLocalTime(RestockEstimateUtc);
@@ -96,9 +105,9 @@ public sealed record TravelItem(
 
     public string RestockAvailabilityText => RestockInfo?.GetAvailabilityLabel(AvailabilityMode) ?? "-";
 
-    public string StockoutEstimateText => StockoutEstimateUtc is null
+    public string StockoutEstimateText => EffectiveStockoutEstimateUtc is null
         ? "-"
-        : FormatLocalTime(StockoutEstimateUtc);
+        : FormatLocalTime(EffectiveStockoutEstimateUtc);
 
     public string StockoutEstimateLabelText => $"Stockout ETA: {StockoutEstimateText}";
 

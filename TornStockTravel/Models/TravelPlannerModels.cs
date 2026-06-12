@@ -81,6 +81,9 @@ public sealed record TravelPlanCandidate(
     string RestockText,
     string StockoutText,
     string ConfidenceText,
+    string PredictionText,
+    string LocalMedianText,
+    string LatestSafeArrivalText,
     string StrategyExplanationText,
     string CooldownText,
     string AlternativeRouteText,
@@ -193,6 +196,12 @@ public sealed record TravelPlanCard(
     public string StockoutText => Candidate?.StockoutText ?? "-";
 
     public string ConfidenceText => Candidate?.ConfidenceText ?? "-";
+
+    public string PredictionText => Candidate?.PredictionText ?? "-";
+
+    public string LocalMedianText => Candidate?.LocalMedianText ?? "-";
+
+    public string LatestSafeArrivalText => Candidate?.LatestSafeArrivalText ?? "-";
 
     public string TimingSourceText => Candidate?.TimingSourceText ?? "-";
 

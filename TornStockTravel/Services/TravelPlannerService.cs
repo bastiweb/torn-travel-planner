@@ -295,7 +295,7 @@ public static class TravelPlannerService
                 : ConservativeTimingBuffer;
             TimeSpan availabilityDuration = GetAvailabilityDuration(item, strategy) ?? ConservativeTimingBuffer;
             DateTimeOffset targetArrival = restockAt.Subtract(arrivalLead);
-            DateTimeOffset latestArrival = restockAt.Add(availabilityDuration);
+            DateTimeOffset latestArrival = GetEffectiveStockoutEstimate(item) ?? restockAt.Add(availabilityDuration);
             DateTimeOffset latestDeparture = latestArrival.Subtract(item.FlightDuration.Value);
 
             if (readyAt > latestDeparture)
@@ -355,7 +355,10 @@ public static class TravelPlannerService
             timingText,
             availabilityText,
             confidenceText,
-            BuildStrategyExplanation(strategy, tripType, usesForecast, profitPerHour, energyWaste, nerveWaste),
+            BuildPredictionText(item),
+            BuildLocalMedianText(item),
+            BuildLatestSafeArrivalText(item),
+            BuildStrategyExplanation(strategy, tripType, usesForecast, profitPerHour, energyWaste, nerveWaste, item.Prediction),
             string.Empty,
             string.Empty,
             usesForecast,
@@ -439,7 +442,10 @@ public static class TravelPlannerService
             BuildForecastTimingText(match.Window, timing),
             BuildForecastSafetyText(match.Window),
             BuildForecastConfidenceText(forecastInfo, match.Window),
-            BuildStrategyExplanation(strategy, ForecastTripType, usesForecast: true, profitPerHour, energyWaste, nerveWaste),
+            BuildPredictionText(item),
+            BuildLocalMedianText(item),
+            BuildLatestSafeArrivalText(item),
+            BuildStrategyExplanation(strategy, ForecastTripType, usesForecast: true, profitPerHour, energyWaste, nerveWaste, item.Prediction),
             string.Empty,
             string.Empty,
             true,
@@ -575,25 +581,55 @@ public static class TravelPlannerService
         DateTimeOffset arrivalAt,
         TravelPlannerStrategy strategy)
     {
-        if (item.StockoutEstimateUtc is null)
+        DateTimeOffset? stockoutEstimate = GetEffectiveStockoutEstimate(item);
+        if (stockoutEstimate is null)
         {
             return true;
         }
 
         DateTimeOffset stockoutAt = strategy == TravelPlannerStrategy.Conservative
-            ? item.StockoutEstimateUtc.Value.Subtract(ConservativeTimingBuffer)
-            : item.StockoutEstimateUtc.Value;
+            ? stockoutEstimate.Value.Subtract(ConservativeTimingBuffer)
+            : stockoutEstimate.Value;
 
         return arrivalAt <= stockoutAt;
     }
 
     private static TimeSpan? GetAvailabilityDuration(TravelItem item, TravelPlannerStrategy strategy)
     {
+        if (item.Prediction?.MedianObservedAvailability is not null
+            && item.Prediction.SelloutSampleCount >= 3)
+        {
+            return item.Prediction.MedianObservedAvailability;
+        }
+
         RestockAvailabilityMode mode = strategy == TravelPlannerStrategy.Conservative
             ? RestockAvailabilityMode.Conservative
             : RestockAvailabilityMode.Median;
 
         return item.RestockInfo?.GetAvailabilityDuration(mode);
+    }
+
+    private static DateTimeOffset? GetEffectiveStockoutEstimate(TravelItem item)
+    {
+        return item.Prediction?.PredictedStockoutUtc ?? item.StockoutEstimateUtc;
+    }
+
+    private static string BuildPredictionText(TravelItem item)
+    {
+        return item.Prediction?.PlannerText ?? "Prediction: collecting data";
+    }
+
+    private static string BuildLocalMedianText(TravelItem item)
+    {
+        return item.Prediction?.AvailabilityText ?? "Local median: not enough history";
+    }
+
+    private static string BuildLatestSafeArrivalText(TravelItem item)
+    {
+        return item.Prediction?.LatestSafeArrivalText
+            ?? (GetEffectiveStockoutEstimate(item) is DateTimeOffset stockoutAt
+                ? $"Latest safe arrival: {stockoutAt.LocalDateTime:HH:mm}"
+                : "Latest safe arrival: -");
     }
 
     private static DateTimeOffset GetNextTornAvailability(TornTravelStatus? travelStatus, DateTimeOffset now)
@@ -604,8 +640,8 @@ public static class TravelPlannerService
     private static string BuildConfidenceText(TravelItem item)
     {
         return item.StockoutConfidenceText == "-"
-            ? item.RestockConfidenceLabelText
-            : $"{item.RestockConfidenceLabelText} | {item.StockoutConfidenceLabelText}";
+            ? $"{item.RestockConfidenceLabelText} | {item.PredictionSummaryText}"
+            : $"{item.RestockConfidenceLabelText} | {item.StockoutConfidenceLabelText} | {item.PredictionSummaryText}";
     }
 
     private static int GetConfidenceScore(string confidenceText)
@@ -666,7 +702,8 @@ public static class TravelPlannerService
         bool usesForecast,
         decimal profitPerHour,
         bool energyWaste,
-        bool nerveWaste)
+        bool nerveWaste,
+        ItemPrediction? prediction)
     {
         string strategyText = strategy switch
         {
@@ -682,8 +719,11 @@ public static class TravelPlannerService
         string wasteText = energyWaste || nerveWaste
             ? "Bars may cap during the round trip."
             : "No energy or nerve cap is expected.";
+        string predictionText = prediction?.HasLocalSignal == true
+            ? "Local sellout history influences the stockout timing."
+            : "Local sellout history is still collecting.";
 
-        return $"Chosen because: ${profitPerHour:N0}/h. {strategyText} {timingText} {wasteText}";
+        return $"Chosen because: ${profitPerHour:N0}/h. {strategyText} {timingText} {wasteText} {predictionText}";
     }
 
     private static TravelPlanCandidate AddCooldownContext(

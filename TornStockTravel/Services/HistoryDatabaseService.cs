@@ -6,7 +6,7 @@ namespace TornStockTravel.Services;
 
 public sealed class HistoryDatabaseService
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly string _databasePath;
     private readonly string _connectionString;
 
@@ -70,6 +70,8 @@ public sealed class HistoryDatabaseService
             $"Saved {itemCount:N0} history item snapshots.");
 
         transaction.Commit();
+
+        RebuildSelloutEvents(connection);
     }
 
     public IReadOnlyDictionary<string, HistoryTrendInfo> BuildTrendLookup(
@@ -127,6 +129,8 @@ public sealed class HistoryDatabaseService
             ? Array.Empty<HistoryRestockOpportunity>()
             : LoadUpcomingRestocks(connection, latestRefreshId.Value, now);
         IReadOnlyList<HistoryMarketMover> marketMovers = LoadMarketMovers(connection, now.AddDays(-60));
+        IReadOnlyList<HistoryFastSelloutItem> fastSelloutItems = LoadFastSelloutItems(connection);
+        IReadOnlyList<HistoryPredictionDisagreement> predictionDisagreements = LoadPredictionDisagreements(connection);
 
         return new HistoryOverview(
             refreshSnapshotCount,
@@ -139,7 +143,9 @@ public sealed class HistoryDatabaseService
             itemOptions,
             topProfitItems,
             marketMovers,
-            upcomingRestocks);
+            upcomingRestocks,
+            fastSelloutItems,
+            predictionDisagreements);
     }
 
     public HistoryItemDetail? BuildItemDetail(int itemId, string countryCode, DateTimeOffset now)
@@ -176,6 +182,24 @@ public sealed class HistoryDatabaseService
                 row.StockoutEstimateUtc))
             .ToList();
 
+        List<PredictionSelloutEvent> selloutEvents = LoadSelloutEvents(connection, itemId, countryCode);
+        DateTimeOffset? currentStockStartedAt = FindCurrentPositiveStockStart(rows.Select(row => new HistoryPredictionSample(
+                row.ObservedAt,
+                row.Quantity,
+                row.RestockEstimateUtc,
+                row.StockoutEstimateUtc))
+            .ToList());
+        ItemPrediction prediction = PredictionAnalysisService.Analyze(
+            itemId,
+            latest.ItemName,
+            latest.CountryCode,
+            rows.Count,
+            selloutEvents,
+            currentStockStartedAt,
+            latest.RestockEstimateUtc,
+            latest.StockoutEstimateUtc,
+            now);
+
         return new HistoryItemDetail(
             itemId,
             latest.ItemName,
@@ -198,7 +222,47 @@ public sealed class HistoryDatabaseService
             latest.StockoutEstimateUtc,
             latest.RestockConfidence,
             latest.StockoutConfidence,
+            prediction,
             recentSamples);
+    }
+
+    public IReadOnlyDictionary<string, ItemPrediction> BuildPredictionLookup(
+        IReadOnlyList<TravelDestination> destinations,
+        DateTimeOffset now)
+    {
+        Dictionary<string, ItemPrediction> predictions = new(StringComparer.OrdinalIgnoreCase);
+        List<(int ItemId, string ItemName, string CountryCode, DateTimeOffset? ApiRestockAt, DateTimeOffset? ApiStockoutAt)> keys = destinations
+            .SelectMany(destination => destination.Items
+                .Where(item => item.Id > 0)
+                .Select(item => (item.Id, item.Name, destination.Code, item.RestockEstimateUtc, item.StockoutEstimateUtc)))
+            .Distinct()
+            .ToList();
+
+        if (keys.Count == 0)
+        {
+            return predictions;
+        }
+
+        using SqliteConnection connection = OpenConnection();
+        foreach ((int itemId, string itemName, string countryCode, DateTimeOffset? apiRestockAt, DateTimeOffset? apiStockoutAt) in keys)
+        {
+            List<HistoryPredictionSample> samples = LoadPredictionSamples(connection, itemId, countryCode, now.AddDays(-90));
+            List<PredictionSelloutEvent> selloutEvents = LoadSelloutEvents(connection, itemId, countryCode);
+            ItemPrediction prediction = PredictionAnalysisService.Analyze(
+                itemId,
+                itemName,
+                countryCode,
+                samples.Count,
+                selloutEvents,
+                FindCurrentPositiveStockStart(samples),
+                apiRestockAt,
+                apiStockoutAt,
+                now);
+            predictions[BuildTrendKey(itemId, countryCode)] = prediction;
+            InsertPredictionSnapshot(connection, prediction, now);
+        }
+
+        return predictions;
     }
 
     public static string BuildTrendKey(int itemId, string countryCode)
@@ -290,10 +354,49 @@ public sealed class HistoryDatabaseService
             );
             """);
 
+        ExecuteNonQuery(connection, """
+            CREATE TABLE IF NOT EXISTS sellout_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                country_code TEXT NOT NULL,
+                country_name TEXT NOT NULL,
+                stock_started_at_utc TEXT NOT NULL,
+                sold_out_at_utc TEXT NOT NULL,
+                duration_minutes REAL NOT NULL,
+                start_quantity INTEGER NOT NULL,
+                restock_estimate_utc TEXT NULL,
+                api_stockout_estimate_utc TEXT NULL,
+                created_at_utc TEXT NOT NULL
+            );
+            """);
+
+        ExecuteNonQuery(connection, """
+            CREATE TABLE IF NOT EXISTS prediction_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                country_code TEXT NOT NULL,
+                observed_at_utc TEXT NOT NULL,
+                sample_count INTEGER NOT NULL,
+                median_availability_minutes REAL NULL,
+                fastest_sellout_minutes REAL NULL,
+                slowest_sellout_minutes REAL NULL,
+                api_stockout_utc TEXT NULL,
+                local_stockout_utc TEXT NULL,
+                blended_stockout_utc TEXT NULL,
+                source TEXT NOT NULL,
+                confidence TEXT NOT NULL
+            );
+            """);
+
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_item_snapshots_item_country_time ON item_snapshots(item_id, country_code, observed_at_utc);");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_market_snapshots_item_time ON market_snapshots(item_id, observed_at_utc);");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_restock_snapshots_item_country_time ON restock_snapshots(item_id, country_code, observed_at_utc);");
+        ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS ux_sellout_events_item_country_window ON sellout_events(item_id, country_code, stock_started_at_utc, sold_out_at_utc);");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_sellout_events_item_country_soldout ON sellout_events(item_id, country_code, sold_out_at_utc);");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_item_country_time ON prediction_snapshots(item_id, country_code, observed_at_utc);");
         ExecuteNonQuery(connection, $"PRAGMA user_version = {SchemaVersion};");
+        RebuildSelloutEvents(connection);
     }
 
     private SqliteConnection OpenConnection()
@@ -483,6 +586,139 @@ public sealed class HistoryDatabaseService
         command.ExecuteNonQuery();
     }
 
+    private static void RebuildSelloutEvents(SqliteConnection connection)
+    {
+        using SqliteCommand query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT item_id,
+                   item_name,
+                   country_code,
+                   country_name,
+                   observed_at_utc,
+                   quantity,
+                   restock_estimate_utc,
+                   stockout_estimate_utc
+            FROM item_snapshots
+            ORDER BY item_id ASC, country_code ASC, observed_at_utc ASC;
+            """;
+
+        List<SelloutSnapshotRow> rows = new();
+        using (SqliteDataReader reader = query.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                rows.Add(new SelloutSnapshotRow(
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    ParseUtc(reader.GetString(4)),
+                    reader.GetInt32(5),
+                    ReadNullableDateTimeOffset(reader, 6),
+                    ReadNullableDateTimeOffset(reader, 7)));
+            }
+        }
+
+        string? activeKey = null;
+        int activeItemId = 0;
+        string activeItemName = string.Empty;
+        string activeCountryCode = string.Empty;
+        string activeCountryName = string.Empty;
+        DateTimeOffset? activeStartedAt = null;
+        int activeStartQuantity = 0;
+        DateTimeOffset? activeRestockEstimate = null;
+        DateTimeOffset? activeApiStockoutEstimate = null;
+
+        using SqliteCommand insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT OR IGNORE INTO sellout_events (
+                item_id, item_name, country_code, country_name, stock_started_at_utc,
+                sold_out_at_utc, duration_minutes, start_quantity, restock_estimate_utc,
+                api_stockout_estimate_utc, created_at_utc)
+            VALUES (
+                $item_id, $item_name, $country_code, $country_name, $stock_started_at_utc,
+                $sold_out_at_utc, $duration_minutes, $start_quantity, $restock_estimate_utc,
+                $api_stockout_estimate_utc, $created_at_utc);
+            """;
+        AddParameters(insert,
+            "$item_id", "$item_name", "$country_code", "$country_name", "$stock_started_at_utc",
+            "$sold_out_at_utc", "$duration_minutes", "$start_quantity", "$restock_estimate_utc",
+            "$api_stockout_estimate_utc", "$created_at_utc");
+
+        foreach (SelloutSnapshotRow row in rows)
+        {
+            string key = BuildTrendKey(row.ItemId, row.CountryCode);
+            if (!string.Equals(activeKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                activeKey = key;
+                activeStartedAt = null;
+            }
+
+            if (row.Quantity > 0 && activeStartedAt is null)
+            {
+                activeItemId = row.ItemId;
+                activeItemName = row.ItemName;
+                activeCountryCode = row.CountryCode;
+                activeCountryName = row.CountryName;
+                activeStartedAt = row.ObservedAt;
+                activeStartQuantity = row.Quantity;
+                activeRestockEstimate = row.RestockEstimateUtc;
+                activeApiStockoutEstimate = row.StockoutEstimateUtc;
+                continue;
+            }
+
+            if (row.Quantity <= 0 && activeStartedAt is not null)
+            {
+                TimeSpan duration = row.ObservedAt - activeStartedAt.Value;
+                if (duration >= TimeSpan.FromMinutes(1) && duration <= TimeSpan.FromHours(24))
+                {
+                    SetValue(insert, "$item_id", activeItemId);
+                    SetValue(insert, "$item_name", activeItemName);
+                    SetValue(insert, "$country_code", activeCountryCode);
+                    SetValue(insert, "$country_name", activeCountryName);
+                    SetValue(insert, "$stock_started_at_utc", FormatUtc(activeStartedAt.Value));
+                    SetValue(insert, "$sold_out_at_utc", FormatUtc(row.ObservedAt));
+                    SetValue(insert, "$duration_minutes", duration.TotalMinutes);
+                    SetValue(insert, "$start_quantity", activeStartQuantity);
+                    SetValue(insert, "$restock_estimate_utc", FormatUtc(activeRestockEstimate));
+                    SetValue(insert, "$api_stockout_estimate_utc", FormatUtc(activeApiStockoutEstimate));
+                    SetValue(insert, "$created_at_utc", FormatUtc(DateTimeOffset.UtcNow));
+                    insert.ExecuteNonQuery();
+                }
+
+                activeStartedAt = null;
+            }
+        }
+    }
+
+    private static void InsertPredictionSnapshot(SqliteConnection connection, ItemPrediction prediction, DateTimeOffset observedAt)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO prediction_snapshots (
+                item_id, country_code, observed_at_utc, sample_count, median_availability_minutes,
+                fastest_sellout_minutes, slowest_sellout_minutes, api_stockout_utc, local_stockout_utc,
+                blended_stockout_utc, source, confidence)
+            VALUES (
+                $item_id, $country_code, $observed_at_utc, $sample_count, $median_availability_minutes,
+                $fastest_sellout_minutes, $slowest_sellout_minutes, $api_stockout_utc, $local_stockout_utc,
+                $blended_stockout_utc, $source, $confidence);
+            """;
+        command.Parameters.AddWithValue("$item_id", prediction.ItemId);
+        command.Parameters.AddWithValue("$country_code", prediction.CountryCode);
+        command.Parameters.AddWithValue("$observed_at_utc", FormatUtc(observedAt));
+        command.Parameters.AddWithValue("$sample_count", prediction.SelloutSampleCount);
+        command.Parameters.AddWithValue("$median_availability_minutes", ToDbValue(prediction.MedianObservedAvailability?.TotalMinutes));
+        command.Parameters.AddWithValue("$fastest_sellout_minutes", ToDbValue(prediction.FastestSellout?.TotalMinutes));
+        command.Parameters.AddWithValue("$slowest_sellout_minutes", ToDbValue(prediction.SlowestSellout?.TotalMinutes));
+        command.Parameters.AddWithValue("$api_stockout_utc", ToDbValue(FormatUtc(prediction.ApiStockoutUtc)));
+        command.Parameters.AddWithValue("$local_stockout_utc", ToDbValue(FormatUtc(prediction.LocalStockoutUtc)));
+        command.Parameters.AddWithValue("$blended_stockout_utc", ToDbValue(FormatUtc(prediction.BlendedStockoutUtc)));
+        command.Parameters.AddWithValue("$source", prediction.Source);
+        command.Parameters.AddWithValue("$confidence", prediction.Confidence);
+        command.ExecuteNonQuery();
+    }
+
     private static List<HistorySample> LoadSamples(
         SqliteConnection connection,
         int itemId,
@@ -515,6 +751,97 @@ public sealed class HistoryDatabaseService
         }
 
         return samples;
+    }
+
+    private static List<HistoryPredictionSample> LoadPredictionSamples(
+        SqliteConnection connection,
+        int itemId,
+        string countryCode,
+        DateTimeOffset since)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT observed_at_utc, quantity, restock_estimate_utc, stockout_estimate_utc
+            FROM item_snapshots
+            WHERE item_id = $item_id
+              AND country_code = $country_code
+              AND observed_at_utc >= $since
+            ORDER BY observed_at_utc ASC;
+            """;
+        command.Parameters.AddWithValue("$item_id", itemId);
+        command.Parameters.AddWithValue("$country_code", countryCode);
+        command.Parameters.AddWithValue("$since", FormatUtc(since));
+
+        List<HistoryPredictionSample> samples = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            samples.Add(new HistoryPredictionSample(
+                ParseUtc(reader.GetString(0)),
+                reader.GetInt32(1),
+                ReadNullableDateTimeOffset(reader, 2),
+                ReadNullableDateTimeOffset(reader, 3)));
+        }
+
+        return samples;
+    }
+
+    private static List<PredictionSelloutEvent> LoadSelloutEvents(
+        SqliteConnection connection,
+        int itemId,
+        string countryCode)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT duration_minutes,
+                   stock_started_at_utc,
+                   sold_out_at_utc,
+                   start_quantity,
+                   restock_estimate_utc,
+                   api_stockout_estimate_utc
+            FROM sellout_events
+            WHERE item_id = $item_id
+              AND country_code = $country_code
+            ORDER BY sold_out_at_utc ASC;
+            """;
+        command.Parameters.AddWithValue("$item_id", itemId);
+        command.Parameters.AddWithValue("$country_code", countryCode);
+
+        List<PredictionSelloutEvent> events = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            events.Add(new PredictionSelloutEvent(
+                TimeSpan.FromMinutes(reader.GetDouble(0)),
+                ParseUtc(reader.GetString(1)),
+                ParseUtc(reader.GetString(2)),
+                reader.GetInt32(3),
+                ReadNullableDateTimeOffset(reader, 4),
+                ReadNullableDateTimeOffset(reader, 5)));
+        }
+
+        return events;
+    }
+
+    private static DateTimeOffset? FindCurrentPositiveStockStart(IReadOnlyList<HistoryPredictionSample> samples)
+    {
+        if (samples.Count == 0 || samples[^1].Quantity <= 0)
+        {
+            return null;
+        }
+
+        DateTimeOffset startedAt = samples[^1].ObservedAt;
+        for (int index = samples.Count - 2; index >= 0; index--)
+        {
+            if (samples[index].Quantity <= 0)
+            {
+                break;
+            }
+
+            startedAt = samples[index].ObservedAt;
+        }
+
+        return startedAt;
     }
 
     private static IReadOnlyList<HistoryItemOption> LoadItemOptions(SqliteConnection connection)
@@ -703,6 +1030,132 @@ public sealed class HistoryDatabaseService
             .ToList();
     }
 
+    private static IReadOnlyList<HistoryFastSelloutItem> LoadFastSelloutItems(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            WITH latest_predictions AS (
+                SELECT item_id, country_code, MAX(observed_at_utc) AS observed_at_utc
+                FROM prediction_snapshots
+                GROUP BY item_id, country_code
+            ),
+            latest_items AS (
+                SELECT item_id, country_code, MAX(observed_at_utc) AS observed_at_utc
+                FROM item_snapshots
+                GROUP BY item_id, country_code
+            )
+            SELECT COALESCE(i.item_name, printf('#%d', p.item_id)) AS item_name,
+                   p.country_code,
+                   COALESCE(i.country_name, p.country_code) AS country_name,
+                   p.sample_count,
+                   p.median_availability_minutes,
+                   p.fastest_sellout_minutes,
+                   p.slowest_sellout_minutes,
+                   p.confidence
+            FROM latest_predictions l
+            JOIN prediction_snapshots p
+              ON p.item_id = l.item_id
+             AND p.country_code = l.country_code
+             AND p.observed_at_utc = l.observed_at_utc
+            LEFT JOIN latest_items li
+              ON li.item_id = p.item_id
+             AND li.country_code = p.country_code
+            LEFT JOIN item_snapshots i
+              ON i.item_id = li.item_id
+             AND i.country_code = li.country_code
+             AND i.observed_at_utc = li.observed_at_utc
+            WHERE p.sample_count > 0
+              AND p.median_availability_minutes IS NOT NULL
+            GROUP BY p.item_id, p.country_code
+            ORDER BY p.median_availability_minutes ASC
+            LIMIT 8;
+            """;
+
+        List<HistoryFastSelloutItem> items = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            items.Add(new HistoryFastSelloutItem(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                TimeSpan.FromMinutes(reader.GetDouble(4)),
+                reader.IsDBNull(5) ? null : TimeSpan.FromMinutes(reader.GetDouble(5)),
+                reader.IsDBNull(6) ? null : TimeSpan.FromMinutes(reader.GetDouble(6)),
+                reader.GetString(7)));
+        }
+
+        return items;
+    }
+
+    private static IReadOnlyList<HistoryPredictionDisagreement> LoadPredictionDisagreements(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            WITH latest_predictions AS (
+                SELECT item_id, country_code, MAX(observed_at_utc) AS observed_at_utc
+                FROM prediction_snapshots
+                GROUP BY item_id, country_code
+            ),
+            latest_items AS (
+                SELECT item_id, country_code, MAX(observed_at_utc) AS observed_at_utc
+                FROM item_snapshots
+                GROUP BY item_id, country_code
+            )
+            SELECT COALESCE(i.item_name, printf('#%d', p.item_id)) AS item_name,
+                   p.country_code,
+                   COALESCE(i.country_name, p.country_code) AS country_name,
+                   p.sample_count,
+                   p.api_stockout_utc,
+                   p.local_stockout_utc,
+                   p.blended_stockout_utc
+            FROM latest_predictions l
+            JOIN prediction_snapshots p
+              ON p.item_id = l.item_id
+             AND p.country_code = l.country_code
+             AND p.observed_at_utc = l.observed_at_utc
+            LEFT JOIN latest_items li
+              ON li.item_id = p.item_id
+             AND li.country_code = p.country_code
+            LEFT JOIN item_snapshots i
+              ON i.item_id = li.item_id
+             AND i.country_code = li.country_code
+             AND i.observed_at_utc = li.observed_at_utc
+            WHERE p.api_stockout_utc IS NOT NULL
+              AND p.local_stockout_utc IS NOT NULL
+            GROUP BY p.item_id, p.country_code
+            ORDER BY p.observed_at_utc DESC
+            LIMIT 80;
+            """;
+
+        List<HistoryPredictionDisagreement> disagreements = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            DateTimeOffset apiStockout = ParseUtc(reader.GetString(4));
+            DateTimeOffset localStockout = ParseUtc(reader.GetString(5));
+            if ((apiStockout - localStockout).Duration() <= TimeSpan.FromMinutes(10))
+            {
+                continue;
+            }
+
+            disagreements.Add(new HistoryPredictionDisagreement(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                apiStockout,
+                localStockout,
+                ReadNullableDateTimeOffset(reader, 6)));
+        }
+
+        return disagreements
+            .OrderByDescending(disagreement => disagreement.Delta)
+            .Take(8)
+            .ToList();
+    }
+
     private static IReadOnlyList<HistoryRestockOpportunity> LoadUpcomingRestocks(
         SqliteConnection connection,
         long refreshId,
@@ -876,6 +1329,11 @@ public sealed class HistoryDatabaseService
         };
     }
 
+    private static object ToDbValue(object? value)
+    {
+        return value ?? DBNull.Value;
+    }
+
     private static string? FormatUtc(DateTimeOffset? value)
     {
         return value is null ? null : FormatUtc(value.Value);
@@ -885,6 +1343,16 @@ public sealed class HistoryDatabaseService
     {
         return value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
     }
+
+    private sealed record SelloutSnapshotRow(
+        int ItemId,
+        string ItemName,
+        string CountryCode,
+        string CountryName,
+        DateTimeOffset ObservedAt,
+        int Quantity,
+        DateTimeOffset? RestockEstimateUtc,
+        DateTimeOffset? StockoutEstimateUtc);
 
     private sealed record HistoryItemSampleRow(
         DateTimeOffset ObservedAt,

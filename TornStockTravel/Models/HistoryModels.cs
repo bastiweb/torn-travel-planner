@@ -38,7 +38,9 @@ public sealed record HistoryOverview(
     IReadOnlyList<HistoryItemOption> ItemOptions,
     IReadOnlyList<HistoryProfitOpportunity> TopProfitItems,
     IReadOnlyList<HistoryMarketMover> MarketMovers,
-    IReadOnlyList<HistoryRestockOpportunity> UpcomingRestocks)
+    IReadOnlyList<HistoryRestockOpportunity> UpcomingRestocks,
+    IReadOnlyList<HistoryFastSelloutItem> FastSelloutItems,
+    IReadOnlyList<HistoryPredictionDisagreement> PredictionDisagreements)
 {
     public bool HasData => RefreshSnapshotCount > 0;
 }
@@ -105,6 +107,7 @@ public sealed record HistoryItemDetail(
     DateTimeOffset? LatestStockoutEstimateUtc,
     string? LatestRestockConfidence,
     string? LatestStockoutConfidence,
+    ItemPrediction? Prediction,
     IReadOnlyList<HistoryItemSample> RecentSamples)
 {
     public string Title => $"{ItemName} - {CountryName} ({CountryCode.ToUpperInvariant()})";
@@ -127,6 +130,13 @@ public sealed record HistoryItemDetail(
         ? "-"
         : LatestStockoutEstimateUtc.Value.LocalDateTime.ToString("dd.MM. HH:mm", CultureInfo.CurrentCulture);
     public string LatestConfidenceText => $"Restock: {LatestRestockConfidence ?? "-"} | Stockout: {LatestStockoutConfidence ?? "-"}";
+    public string PredictionSourceText => Prediction?.SourceText ?? "Prediction: collecting data";
+    public string PredictionAvailabilityText => Prediction?.AvailabilityText ?? "Local availability: not enough history";
+    public string PredictionStockoutText => Prediction?.StockoutText ?? "Predicted stockout: -";
+    public string PredictionSampleText => Prediction?.SampleText ?? "No sellout samples yet";
+    public string PredictionRangeText => Prediction?.RangeText ?? "Observed range: -";
+    public string PredictionDeltaText => Prediction?.ApiLocalDeltaText ?? "API vs local: -";
+    public string PredictionExplanationText => Prediction?.Explanation ?? "Waiting for more historical data.";
 
     private static string FormatMoney(decimal? value)
     {
@@ -196,6 +206,45 @@ public sealed record HistoryMarketMover(
     };
     public string ChangeText => $"{DirectionText} ${Math.Abs(AbsoluteChange).ToString("N0", CultureInfo.CurrentCulture)} ({PercentChange:+0.0;-0.0;0.0}%)";
     public string ValueText => $"${FirstMarketValue.ToString("N0", CultureInfo.CurrentCulture)} -> ${LatestMarketValue.ToString("N0", CultureInfo.CurrentCulture)}";
+}
+
+public sealed record HistoryFastSelloutItem(
+    string ItemName,
+    string CountryCode,
+    string CountryName,
+    int SampleCount,
+    TimeSpan MedianAvailability,
+    TimeSpan? FastestSellout,
+    TimeSpan? SlowestSellout,
+    string Confidence)
+{
+    public string DestinationText => $"{CountryName} ({CountryCode.ToUpperInvariant()})";
+    public string MedianText => $"Median: {ItemPrediction.FormatDuration(MedianAvailability)}";
+    public string SampleText => $"{SampleCount:N0} sellout samples";
+    public string RangeText => FastestSellout is null || SlowestSellout is null
+        ? "Range: -"
+        : $"Range: {ItemPrediction.FormatDuration(FastestSellout.Value)} - {ItemPrediction.FormatDuration(SlowestSellout.Value)}";
+    public string ConfidenceText => $"Prediction: {Confidence}";
+}
+
+public sealed record HistoryPredictionDisagreement(
+    string ItemName,
+    string CountryCode,
+    string CountryName,
+    int SampleCount,
+    DateTimeOffset ApiStockoutUtc,
+    DateTimeOffset LocalStockoutUtc,
+    DateTimeOffset? BlendedStockoutUtc)
+{
+    public TimeSpan Delta => (ApiStockoutUtc - LocalStockoutUtc).Duration();
+    public string DestinationText => $"{CountryName} ({CountryCode.ToUpperInvariant()})";
+    public string DeltaText => $"Delta: {ItemPrediction.FormatDuration(Delta)}";
+    public string ApiText => $"API: {ApiStockoutUtc.LocalDateTime.ToString("HH:mm", CultureInfo.CurrentCulture)}";
+    public string LocalText => $"Local: {LocalStockoutUtc.LocalDateTime.ToString("HH:mm", CultureInfo.CurrentCulture)}";
+    public string BlendedText => BlendedStockoutUtc is null
+        ? "Blended: -"
+        : $"Blended: {BlendedStockoutUtc.Value.LocalDateTime.ToString("HH:mm", CultureInfo.CurrentCulture)}";
+    public string SampleText => $"{SampleCount:N0} local samples";
 }
 
 public sealed record HistoryRestockOpportunity(

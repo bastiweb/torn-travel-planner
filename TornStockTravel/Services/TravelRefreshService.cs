@@ -221,6 +221,9 @@ public sealed class TravelRefreshService : IDisposable
                 IReadOnlyDictionary<string, HistoryTrendInfo> trendLookup =
                     await Task.Run(() => _historyDatabaseService.BuildTrendLookup(destinations, refreshedAt));
                 destinations = TrendAnalysisService.ApplyTrends(destinations, trendLookup);
+                IReadOnlyDictionary<string, ItemPrediction> predictionLookup =
+                    await Task.Run(() => _historyDatabaseService.BuildPredictionLookup(historyDestinations, refreshedAt));
+                destinations = PredictionAnalysisService.ApplyPredictions(destinations, predictionLookup);
             }
             catch (Exception ex)
             {
