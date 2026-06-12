@@ -681,6 +681,22 @@ public partial class MainWindow : Window
             itemName.Contains(query, StringComparison.CurrentCultureIgnoreCase));
     }
 
+    private HistoryOverview ApplyGlobalExcludedItems(HistoryOverview overview)
+    {
+        IReadOnlyList<string> excludedQueries = _settings.GlobalExcludedItemQueries;
+        if (excludedQueries.Count == 0)
+        {
+            return overview;
+        }
+
+        return overview with
+        {
+            TopProfitItems = overview.TopProfitItems
+                .Where(item => !IsGloballyExcludedItem(item.ItemName, excludedQueries))
+                .ToList()
+        };
+    }
+
     private void QueueHistoryOverviewUpdate()
     {
         if (_isUpdatingHistoryOverview)
@@ -697,6 +713,7 @@ public partial class MainWindow : Window
         try
         {
             HistoryOverview overview = await Task.Run(() => _historyDatabaseService.BuildOverview(DateTimeOffset.Now));
+            overview = ApplyGlobalExcludedItems(overview);
             HistoryTrends.SetOverview(overview);
             await UpdateHistoryItemDetailAsync(HistoryTrends.SelectedHistoryItem);
         }
