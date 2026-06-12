@@ -1161,6 +1161,55 @@
                       Padding="14"
                       Margin="0,0,0,22">
                 <StackPanel>
+                  <TextBlock Text="Database"
+                             Foreground="#F8FAFC"
+                             FontSize="15"
+                             FontWeight="SemiBold" />
+                  <TextBlock Text="Back up your full local database or share a sanitized history export without API keys, settings, wallet, vault, inventory, or Discord data."
+                             Margin="0,4,0,12"
+                             Foreground="#94A3B8"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+
+                  <WrapPanel>
+                    <Button MinWidth="132"
+                            Height="34"
+                            Margin="0,0,10,10"
+                            Click="ExportDatabaseBackupButton_Click"
+                            Content="Export backup" />
+                    <Button MinWidth="172"
+                            Height="34"
+                            Margin="0,0,10,10"
+                            Click="ExportShareableHistoryButton_Click"
+                            Content="Export shareable history" />
+                    <Button MinWidth="162"
+                            Height="34"
+                            Margin="0,0,0,10"
+                            Click="ImportShareableHistoryButton_Click"
+                            Content="Import / merge history" />
+                  </WrapPanel>
+
+                  <TextBlock x:Name="DatabaseStatusText"
+                             Foreground="#5EEAD4"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="DatabasePathText"
+                             Margin="0,8,0,0"
+                             Foreground="#64748B"
+                             FontSize="11"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+
+              <Border Background="#0B1120"
+                      BorderBrush="#243044"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="14"
+                      Margin="0,0,0,22">
+                <StackPanel>
                   <TextBlock Text="Alerts"
                              Foreground="#F8FAFC"
                              FontSize="15"

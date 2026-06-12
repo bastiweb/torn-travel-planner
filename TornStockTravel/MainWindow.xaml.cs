@@ -4,6 +4,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using TornStockTravel.Services;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using WpfButton = System.Windows.Controls.Button;
 using WpfCheckBox = System.Windows.Controls.CheckBox;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -80,6 +82,7 @@ public partial class MainWindow : Window
             ? "No key saved"
             : "Key saved";
         InitializeUpdateStatus();
+        DatabasePathText.Text = $"Active database: {_historyDatabaseService.DatabasePath}";
 
         _travelRefreshService = new TravelRefreshService(
             _settings.TornApiKey,
@@ -609,6 +612,105 @@ public partial class MainWindow : Window
             : "Key saved";
 
         await _travelRefreshService.RefreshNowAsync();
+    }
+
+    private async void ExportDatabaseBackupButton_Click(object sender, RoutedEventArgs e)
+    {
+        SaveFileDialog dialog = new()
+        {
+            Title = "Export database backup",
+            Filter = "SQLite database (*.db)|*.db|All files (*.*)|*.*",
+            FileName = $"torn-stock-backup-{DateTimeOffset.Now:yyyyMMdd-HHmm}.db",
+            OverwritePrompt = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        DatabaseStatusText.Text = "Exporting full backup...";
+        try
+        {
+            await Task.Run(() => _historyDatabaseService.ExportFullBackup(dialog.FileName));
+            DatabaseStatusText.Text = $"Backup exported: {dialog.FileName}";
+        }
+        catch (Exception ex)
+        {
+            DatabaseStatusText.Text = "Backup export failed";
+            AppLogService.Warning($"Database backup export failed: {ex.Message}");
+            ShowErrorToastIfNeeded($"Database backup export failed: {ex.Message}");
+        }
+    }
+
+    private async void ExportShareableHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        SaveFileDialog dialog = new()
+        {
+            Title = "Export shareable history",
+            Filter = "Torn Stock history (*.tornhistory)|*.tornhistory|SQLite database (*.db)|*.db|All files (*.*)|*.*",
+            FileName = $"torn-stock-history-{DateTimeOffset.Now:yyyyMMdd-HHmm}.tornhistory",
+            OverwritePrompt = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        DatabaseStatusText.Text = "Exporting sanitized history...";
+        try
+        {
+            HistoryShareExportSummary summary = await Task.Run(() => _historyDatabaseService.ExportShareableHistory(dialog.FileName));
+            DatabaseStatusText.Text = $"{summary.SummaryText}. No API keys or settings included.";
+        }
+        catch (Exception ex)
+        {
+            DatabaseStatusText.Text = "Shareable export failed";
+            AppLogService.Warning($"Shareable history export failed: {ex.Message}");
+            ShowErrorToastIfNeeded($"Shareable history export failed: {ex.Message}");
+        }
+    }
+
+    private async void ImportShareableHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        OpenFileDialog dialog = new()
+        {
+            Title = "Import and merge history",
+            Filter = "Torn Stock history or SQLite (*.tornhistory;*.db)|*.tornhistory;*.db|All files (*.*)|*.*",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        MessageBoxResult result = WpfMessageBox.Show(
+            this,
+            "This will merge shareable history into your local database. Existing duplicate sellout events and samples will be skipped.\n\nContinue?",
+            "Import History",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        DatabaseStatusText.Text = "Merging history...";
+        try
+        {
+            HistoryImportSummary summary = await Task.Run(() => _historyDatabaseService.ImportShareableHistory(dialog.FileName));
+            DatabaseStatusText.Text = summary.SummaryText;
+            QueueHistoryOverviewUpdate();
+            RefreshVisibleDataFromSettings();
+        }
+        catch (Exception ex)
+        {
+            DatabaseStatusText.Text = "History import failed";
+            AppLogService.Warning($"Shareable history import failed: {ex.Message}");
+            ShowErrorToastIfNeeded($"Shareable history import failed: {ex.Message}");
+        }
     }
 
     private void OnTravelStateChanged(object? sender, TravelRefreshState state)

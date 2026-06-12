@@ -27,6 +27,22 @@ public sealed record HistorySample(
     decimal? UnitProfit,
     decimal? ProfitPerHour);
 
+public sealed record HistoryShareExportSummary(
+    int SelloutEventCount,
+    int MarketSampleCount,
+    int RestockSampleCount)
+{
+    public string SummaryText => $"{SelloutEventCount:N0} sellout events, {MarketSampleCount:N0} market samples, {RestockSampleCount:N0} restock samples exported";
+}
+
+public sealed record HistoryImportSummary(
+    int SelloutEventCount,
+    int MarketSampleCount,
+    int RestockSampleCount)
+{
+    public string SummaryText => $"{SelloutEventCount:N0} sellout events, {MarketSampleCount:N0} market samples, {RestockSampleCount:N0} restock samples merged";
+}
+
 public sealed record HistoryOverview(
     int RefreshSnapshotCount,
     int ItemSnapshotCount,

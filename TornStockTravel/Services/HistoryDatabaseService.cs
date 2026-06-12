@@ -28,6 +28,173 @@ public sealed class HistoryDatabaseService
 
     public string DatabasePath => _databasePath;
 
+    public void ExportFullBackup(string targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            throw new ArgumentException("Target path is required.", nameof(targetPath));
+        }
+
+        string fullTargetPath = Path.GetFullPath(targetPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullTargetPath) ?? ".");
+        if (File.Exists(fullTargetPath))
+        {
+            File.Delete(fullTargetPath);
+        }
+
+        using SqliteConnection source = OpenConnection();
+        using SqliteConnection destination = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = fullTargetPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        destination.Open();
+        source.BackupDatabase(destination);
+    }
+
+    public HistoryShareExportSummary ExportShareableHistory(string targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            throw new ArgumentException("Target path is required.", nameof(targetPath));
+        }
+
+        string fullTargetPath = Path.GetFullPath(targetPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullTargetPath) ?? ".");
+        if (File.Exists(fullTargetPath))
+        {
+            File.Delete(fullTargetPath);
+        }
+
+        using (SqliteConnection target = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = fullTargetPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString()))
+        {
+            target.Open();
+            CreateShareExportSchema(target);
+        }
+
+        using SqliteConnection source = OpenConnection();
+        ExecuteNonQuery(source, $"ATTACH DATABASE {QuoteSqlLiteral(fullTargetPath)} AS export_db;");
+        try
+        {
+            ExecuteNonQuery(source, """
+                INSERT INTO export_db.share_metadata (key, value)
+                VALUES
+                    ('format', 'torn-stock-travel-history'),
+                    ('version', '1'),
+                    ('created_at_utc', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+                """);
+            ExecuteNonQuery(source, """
+                INSERT INTO export_db.sellout_events (
+                    item_id, item_name, country_code, country_name, stock_started_at_utc,
+                    sold_out_at_utc, duration_minutes, start_quantity, restock_estimate_utc,
+                    api_stockout_estimate_utc, created_at_utc)
+                SELECT item_id, item_name, country_code, country_name, stock_started_at_utc,
+                       sold_out_at_utc, duration_minutes, start_quantity, restock_estimate_utc,
+                       api_stockout_estimate_utc, created_at_utc
+                FROM sellout_events;
+                """);
+            ExecuteNonQuery(source, """
+                INSERT INTO export_db.market_history (observed_at_utc, item_id, item_name, market_value)
+                SELECT observed_at_utc, item_id, item_name, market_value
+                FROM market_snapshots
+                WHERE market_value IS NOT NULL;
+                """);
+            ExecuteNonQuery(source, """
+                INSERT INTO export_db.restock_history (
+                    observed_at_utc, item_id, item_name, country_code, restock_estimate_utc,
+                    stockout_estimate_utc, restock_confidence, stockout_confidence, restock_availability)
+                SELECT observed_at_utc, item_id, item_name, country_code, restock_estimate_utc,
+                       stockout_estimate_utc, restock_confidence, stockout_confidence, restock_availability
+                FROM restock_snapshots;
+                """);
+        }
+        finally
+        {
+            ExecuteNonQuery(source, "DETACH DATABASE export_db;");
+        }
+
+        using SqliteConnection exported = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = fullTargetPath,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        exported.Open();
+        return new HistoryShareExportSummary(
+            ExecuteScalarInt(exported, "SELECT COUNT(*) FROM sellout_events;"),
+            ExecuteScalarInt(exported, "SELECT COUNT(*) FROM market_history;"),
+            ExecuteScalarInt(exported, "SELECT COUNT(*) FROM restock_history;"));
+    }
+
+    public HistoryImportSummary ImportShareableHistory(string importPath)
+    {
+        if (string.IsNullOrWhiteSpace(importPath))
+        {
+            throw new ArgumentException("Import path is required.", nameof(importPath));
+        }
+
+        string fullImportPath = Path.GetFullPath(importPath);
+        if (!File.Exists(fullImportPath))
+        {
+            throw new FileNotFoundException("The selected history file does not exist.", fullImportPath);
+        }
+
+        if (string.Equals(Path.GetFullPath(_databasePath), fullImportPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("The active history database cannot be imported into itself.");
+        }
+
+        using SqliteConnection connection = OpenConnection();
+        ExecuteNonQuery(connection, $"ATTACH DATABASE {QuoteSqlLiteral(fullImportPath)} AS import_db;");
+        try
+        {
+            bool hasSelloutEvents = TableExists(connection, "import_db", "sellout_events");
+            bool hasMarketHistory = TableExists(connection, "import_db", "market_history");
+            bool hasMarketSnapshots = TableExists(connection, "import_db", "market_snapshots");
+            bool hasRestockHistory = TableExists(connection, "import_db", "restock_history");
+            bool hasRestockSnapshots = TableExists(connection, "import_db", "restock_snapshots");
+
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            long refreshId = InsertRefreshSnapshot(
+                connection,
+                transaction,
+                DateTimeOffset.UtcNow,
+                "history-import",
+                0);
+
+            int selloutImported = hasSelloutEvents
+                ? ImportSelloutEvents(connection, transaction)
+                : 0;
+            int marketImported = hasMarketHistory
+                ? ImportMarketHistory(connection, transaction, refreshId, "market_history")
+                : hasMarketSnapshots
+                    ? ImportMarketHistory(connection, transaction, refreshId, "market_snapshots")
+                    : 0;
+            int restockImported = hasRestockHistory
+                ? ImportRestockHistory(connection, transaction, refreshId, "restock_history")
+                : hasRestockSnapshots
+                    ? ImportRestockHistory(connection, transaction, refreshId, "restock_snapshots")
+                    : 0;
+
+            InsertAppEvent(
+                connection,
+                transaction,
+                DateTimeOffset.UtcNow,
+                "history_import_merged",
+                $"Merged {selloutImported:N0} sellout events, {marketImported:N0} market samples, and {restockImported:N0} restock samples.");
+            transaction.Commit();
+
+            return new HistoryImportSummary(selloutImported, marketImported, restockImported);
+        }
+        finally
+        {
+            ExecuteNonQuery(connection, "DETACH DATABASE import_db;");
+        }
+    }
+
     public void SaveRefreshSnapshot(
         IReadOnlyList<TravelDestination> destinations,
         DateTimeOffset observedAt,
@@ -584,6 +751,163 @@ public sealed class HistoryDatabaseService
         command.Parameters.AddWithValue("$event_type", eventType);
         command.Parameters.AddWithValue("$message", message);
         command.ExecuteNonQuery();
+    }
+
+    private static void CreateShareExportSchema(SqliteConnection connection)
+    {
+        ExecuteNonQuery(connection, """
+            CREATE TABLE share_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """);
+        ExecuteNonQuery(connection, """
+            CREATE TABLE sellout_events (
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                country_code TEXT NOT NULL,
+                country_name TEXT NOT NULL,
+                stock_started_at_utc TEXT NOT NULL,
+                sold_out_at_utc TEXT NOT NULL,
+                duration_minutes REAL NOT NULL,
+                start_quantity INTEGER NOT NULL,
+                restock_estimate_utc TEXT NULL,
+                api_stockout_estimate_utc TEXT NULL,
+                created_at_utc TEXT NOT NULL
+            );
+            """);
+        ExecuteNonQuery(connection, """
+            CREATE TABLE market_history (
+                observed_at_utc TEXT NOT NULL,
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                market_value REAL NOT NULL
+            );
+            """);
+        ExecuteNonQuery(connection, """
+            CREATE TABLE restock_history (
+                observed_at_utc TEXT NOT NULL,
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                country_code TEXT NOT NULL,
+                restock_estimate_utc TEXT NULL,
+                stockout_estimate_utc TEXT NULL,
+                restock_confidence TEXT NULL,
+                stockout_confidence TEXT NULL,
+                restock_availability TEXT NULL
+            );
+            """);
+        ExecuteNonQuery(connection, "CREATE UNIQUE INDEX ux_export_sellout_events ON sellout_events(item_id, country_code, stock_started_at_utc, sold_out_at_utc);");
+        ExecuteNonQuery(connection, "CREATE INDEX idx_export_market_history ON market_history(item_id, observed_at_utc);");
+        ExecuteNonQuery(connection, "CREATE INDEX idx_export_restock_history ON restock_history(item_id, country_code, observed_at_utc);");
+    }
+
+    private static int ImportSelloutEvents(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT OR IGNORE INTO sellout_events (
+                item_id, item_name, country_code, country_name, stock_started_at_utc,
+                sold_out_at_utc, duration_minutes, start_quantity, restock_estimate_utc,
+                api_stockout_estimate_utc, created_at_utc)
+            SELECT item_id, item_name, country_code, country_name, stock_started_at_utc,
+                   sold_out_at_utc, duration_minutes, start_quantity, restock_estimate_utc,
+                   api_stockout_estimate_utc, COALESCE(created_at_utc, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            FROM import_db.sellout_events
+            WHERE item_id > 0
+              AND country_code IS NOT NULL
+              AND stock_started_at_utc IS NOT NULL
+              AND sold_out_at_utc IS NOT NULL
+              AND duration_minutes >= 1
+              AND duration_minutes <= 1440;
+            """;
+        return command.ExecuteNonQuery();
+    }
+
+    private static int ImportMarketHistory(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long refreshId,
+        string sourceTable)
+    {
+        string query = sourceTable == "market_snapshots"
+            ? """
+                INSERT INTO market_snapshots (refresh_id, observed_at_utc, item_id, item_name, market_value, bazaar_price, effective_value)
+                SELECT $refresh_id, observed_at_utc, item_id, item_name, market_value, NULL, market_value
+                FROM import_db.market_snapshots source
+                WHERE source.item_id > 0
+                  AND source.market_value IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM market_snapshots existing
+                      WHERE existing.item_id = source.item_id
+                        AND existing.observed_at_utc = source.observed_at_utc
+                        AND COALESCE(existing.market_value, -1) = COALESCE(source.market_value, -1)
+                );
+                """
+            : """
+                INSERT INTO market_snapshots (refresh_id, observed_at_utc, item_id, item_name, market_value, bazaar_price, effective_value)
+                SELECT $refresh_id, observed_at_utc, item_id, item_name, market_value, NULL, market_value
+                FROM import_db.market_history source
+                WHERE source.item_id > 0
+                  AND source.market_value IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM market_snapshots existing
+                      WHERE existing.item_id = source.item_id
+                        AND existing.observed_at_utc = source.observed_at_utc
+                        AND COALESCE(existing.market_value, -1) = COALESCE(source.market_value, -1)
+                );
+                """;
+
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = query;
+        command.Parameters.AddWithValue("$refresh_id", refreshId);
+        return command.ExecuteNonQuery();
+    }
+
+    private static int ImportRestockHistory(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long refreshId,
+        string sourceTable)
+    {
+        string table = sourceTable == "restock_snapshots" ? "restock_snapshots" : "restock_history";
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            INSERT INTO restock_snapshots (
+                refresh_id, observed_at_utc, item_id, item_name, country_code,
+                restock_estimate_utc, stockout_estimate_utc, restock_confidence,
+                stockout_confidence, restock_availability)
+            SELECT $refresh_id, observed_at_utc, item_id, item_name, country_code,
+                   restock_estimate_utc, stockout_estimate_utc, restock_confidence,
+                   stockout_confidence, restock_availability
+            FROM import_db.{table} source
+            WHERE source.item_id > 0
+              AND source.country_code IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM restock_snapshots existing
+                  WHERE existing.item_id = source.item_id
+                    AND existing.country_code = source.country_code
+                    AND existing.observed_at_utc = source.observed_at_utc
+                    AND COALESCE(existing.restock_estimate_utc, '') = COALESCE(source.restock_estimate_utc, '')
+                    AND COALESCE(existing.stockout_estimate_utc, '') = COALESCE(source.stockout_estimate_utc, '')
+              );
+            """;
+        command.Parameters.AddWithValue("$refresh_id", refreshId);
+        return command.ExecuteNonQuery();
+    }
+
+    private static bool TableExists(SqliteConnection connection, string schema, string tableName)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {schema}.sqlite_master WHERE type = 'table' AND name = $table_name;";
+        command.Parameters.AddWithValue("$table_name", tableName);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
     }
 
     private static void RebuildSelloutEvents(SqliteConnection connection)
@@ -1332,6 +1656,11 @@ public sealed class HistoryDatabaseService
     private static object ToDbValue(object? value)
     {
         return value ?? DBNull.Value;
+    }
+
+    private static string QuoteSqlLiteral(string value)
+    {
+        return $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
     }
 
     private static string? FormatUtc(DateTimeOffset? value)
