@@ -104,6 +104,103 @@ public sealed class HistoryDatabaseService
         return trends;
     }
 
+    public HistoryOverview BuildOverview(DateTimeOffset now)
+    {
+        using SqliteConnection connection = OpenConnection();
+
+        int refreshSnapshotCount = ExecuteScalarInt(connection, "SELECT COUNT(*) FROM refresh_snapshots;");
+        int itemSnapshotCount = ExecuteScalarInt(connection, "SELECT COUNT(*) FROM item_snapshots;");
+        int marketSnapshotCount = ExecuteScalarInt(connection, "SELECT COUNT(*) FROM market_snapshots;");
+        int restockSnapshotCount = ExecuteScalarInt(connection, "SELECT COUNT(*) FROM restock_snapshots;");
+        DateTimeOffset? firstObservedAt = ExecuteScalarDateTime(connection, "SELECT observed_at_utc FROM refresh_snapshots ORDER BY observed_at_utc ASC LIMIT 1;");
+        DateTimeOffset? lastObservedAt = ExecuteScalarDateTime(connection, "SELECT observed_at_utc FROM refresh_snapshots ORDER BY observed_at_utc DESC LIMIT 1;");
+        long? latestRefreshId = ExecuteScalarLongNullable(connection, "SELECT id FROM refresh_snapshots ORDER BY observed_at_utc DESC LIMIT 1;");
+        int latestItemCount = latestRefreshId is null
+            ? 0
+            : ExecuteScalarInt(connection, "SELECT item_count FROM refresh_snapshots WHERE id = $refresh_id;", ("$refresh_id", latestRefreshId.Value));
+
+        IReadOnlyList<HistoryItemOption> itemOptions = LoadItemOptions(connection);
+        IReadOnlyList<HistoryProfitOpportunity> topProfitItems = latestRefreshId is null
+            ? Array.Empty<HistoryProfitOpportunity>()
+            : LoadTopProfitItems(connection, latestRefreshId.Value);
+        IReadOnlyList<HistoryRestockOpportunity> upcomingRestocks = latestRefreshId is null
+            ? Array.Empty<HistoryRestockOpportunity>()
+            : LoadUpcomingRestocks(connection, latestRefreshId.Value, now);
+        IReadOnlyList<HistoryMarketMover> marketMovers = LoadMarketMovers(connection, now.AddDays(-60));
+
+        return new HistoryOverview(
+            refreshSnapshotCount,
+            itemSnapshotCount,
+            marketSnapshotCount,
+            restockSnapshotCount,
+            latestItemCount,
+            firstObservedAt,
+            lastObservedAt,
+            itemOptions,
+            topProfitItems,
+            marketMovers,
+            upcomingRestocks);
+    }
+
+    public HistoryItemDetail? BuildItemDetail(int itemId, string countryCode, DateTimeOffset now)
+    {
+        using SqliteConnection connection = OpenConnection();
+        List<HistoryItemSampleRow> rows = LoadItemDetailRows(connection, itemId, countryCode, now.AddDays(-90));
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        HistoryItemSampleRow first = rows.First();
+        HistoryItemSampleRow latest = rows.Last();
+        List<decimal> marketValues = rows
+            .Where(row => row.MarketValue is not null)
+            .Select(row => row.MarketValue!.Value)
+            .ToList();
+        List<decimal> profitPerHourValues = rows
+            .Where(row => row.ProfitPerHour is not null)
+            .Select(row => row.ProfitPerHour!.Value)
+            .ToList();
+        IReadOnlyList<HistoryItemSample> recentSamples = rows
+            .OrderByDescending(row => row.ObservedAt)
+            .Take(18)
+            .Select(row => new HistoryItemSample(
+                row.ObservedAt,
+                row.Quantity,
+                row.Cost,
+                row.MarketValue,
+                row.EffectiveValue,
+                row.UnitProfit,
+                row.ProfitPerHour,
+                row.RestockEstimateUtc,
+                row.StockoutEstimateUtc))
+            .ToList();
+
+        return new HistoryItemDetail(
+            itemId,
+            latest.ItemName,
+            latest.CountryCode,
+            latest.CountryName,
+            rows.Count,
+            first.ObservedAt,
+            latest.ObservedAt,
+            latest.Quantity,
+            latest.Cost,
+            latest.MarketValue,
+            latest.EffectiveValue,
+            latest.UnitProfit,
+            latest.ProfitPerHour,
+            profitPerHourValues.Count == 0 ? null : profitPerHourValues.Average(),
+            marketValues.Count == 0 ? null : marketValues.Min(),
+            marketValues.Count == 0 ? null : marketValues.Max(),
+            rows.Count(row => row.Quantity <= 0),
+            latest.RestockEstimateUtc,
+            latest.StockoutEstimateUtc,
+            latest.RestockConfidence,
+            latest.StockoutConfidence,
+            recentSamples);
+    }
+
     public static string BuildTrendKey(int itemId, string countryCode)
     {
         return $"{countryCode.ToLowerInvariant()}:{itemId}";
@@ -420,11 +517,338 @@ public sealed class HistoryDatabaseService
         return samples;
     }
 
+    private static IReadOnlyList<HistoryItemOption> LoadItemOptions(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            WITH grouped AS (
+                SELECT item_id,
+                       country_code,
+                       COUNT(*) AS snapshot_count,
+                       MAX(observed_at_utc) AS last_observed_at
+                FROM item_snapshots
+                GROUP BY item_id, country_code
+            )
+            SELECT g.item_id,
+                   i.item_name,
+                   g.country_code,
+                   i.country_name,
+                   g.snapshot_count,
+                   g.last_observed_at
+            FROM grouped g
+            JOIN item_snapshots i
+              ON i.item_id = g.item_id
+             AND i.country_code = g.country_code
+             AND i.observed_at_utc = g.last_observed_at
+            GROUP BY g.item_id, g.country_code
+            ORDER BY i.item_name COLLATE NOCASE ASC, i.country_name COLLATE NOCASE ASC
+            LIMIT 500;
+            """;
+
+        List<HistoryItemOption> options = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            options.Add(new HistoryItemOption(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetInt32(4),
+                ParseUtc(reader.GetString(5))));
+        }
+
+        return options;
+    }
+
+    private static List<HistoryItemSampleRow> LoadItemDetailRows(
+        SqliteConnection connection,
+        int itemId,
+        string countryCode,
+        DateTimeOffset since)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT observed_at_utc,
+                   item_name,
+                   country_code,
+                   country_name,
+                   quantity,
+                   cost,
+                   market_value,
+                   effective_value,
+                   unit_profit,
+                   profit_per_hour,
+                   restock_estimate_utc,
+                   stockout_estimate_utc,
+                   restock_confidence,
+                   stockout_confidence
+            FROM item_snapshots
+            WHERE item_id = $item_id
+              AND country_code = $country_code
+              AND observed_at_utc >= $since
+            ORDER BY observed_at_utc ASC
+            LIMIT 1000;
+            """;
+        command.Parameters.AddWithValue("$item_id", itemId);
+        command.Parameters.AddWithValue("$country_code", countryCode);
+        command.Parameters.AddWithValue("$since", FormatUtc(since));
+
+        List<HistoryItemSampleRow> rows = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new HistoryItemSampleRow(
+                ParseUtc(reader.GetString(0)),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetInt32(4),
+                ReadNullableDecimal(reader, 5) ?? 0,
+                ReadNullableDecimal(reader, 6),
+                ReadNullableDecimal(reader, 7),
+                ReadNullableDecimal(reader, 8),
+                ReadNullableDecimal(reader, 9),
+                ReadNullableDateTimeOffset(reader, 10),
+                ReadNullableDateTimeOffset(reader, 11),
+                ReadNullableString(reader, 12),
+                ReadNullableString(reader, 13)));
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<HistoryProfitOpportunity> LoadTopProfitItems(SqliteConnection connection, long refreshId)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT item_name, country_code, country_name, profit_per_hour, profit, quantity, market_value, unit_profit
+            FROM item_snapshots
+            WHERE refresh_id = $refresh_id
+              AND profit_per_hour IS NOT NULL
+              AND profit_per_hour > 0
+            ORDER BY profit_per_hour DESC
+            LIMIT 8;
+            """;
+        command.Parameters.AddWithValue("$refresh_id", refreshId);
+
+        List<HistoryProfitOpportunity> items = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            items.Add(new HistoryProfitOpportunity(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                ReadNullableDecimal(reader, 3) ?? 0,
+                ReadNullableDecimal(reader, 4) ?? 0,
+                reader.GetInt32(5),
+                ReadNullableDecimal(reader, 6),
+                ReadNullableDecimal(reader, 7)));
+        }
+
+        return items;
+    }
+
+    private static IReadOnlyList<HistoryMarketMover> LoadMarketMovers(SqliteConnection connection, DateTimeOffset since)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT item_id, item_name, observed_at_utc, market_value
+            FROM market_snapshots
+            WHERE market_value IS NOT NULL
+              AND observed_at_utc >= $since
+            ORDER BY item_id ASC, observed_at_utc ASC;
+            """;
+        command.Parameters.AddWithValue("$since", FormatUtc(since));
+
+        Dictionary<int, List<(string ItemName, DateTimeOffset ObservedAt, decimal MarketValue)>> samples = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            int itemId = reader.GetInt32(0);
+            if (!samples.TryGetValue(itemId, out List<(string ItemName, DateTimeOffset ObservedAt, decimal MarketValue)>? itemSamples))
+            {
+                itemSamples = new List<(string ItemName, DateTimeOffset ObservedAt, decimal MarketValue)>();
+                samples[itemId] = itemSamples;
+            }
+
+            itemSamples.Add((
+                reader.GetString(1),
+                ParseUtc(reader.GetString(2)),
+                ReadNullableDecimal(reader, 3) ?? 0));
+        }
+
+        return samples
+            .Select(pair =>
+            {
+                List<(string ItemName, DateTimeOffset ObservedAt, decimal MarketValue)> ordered = pair.Value
+                    .OrderBy(sample => sample.ObservedAt)
+                    .ToList();
+                (string ItemName, DateTimeOffset ObservedAt, decimal MarketValue) first = ordered.First();
+                (string ItemName, DateTimeOffset ObservedAt, decimal MarketValue) latest = ordered.Last();
+
+                return new HistoryMarketMover(
+                    pair.Key,
+                    latest.ItemName,
+                    first.MarketValue,
+                    latest.MarketValue,
+                    first.ObservedAt,
+                    latest.ObservedAt);
+            })
+            .Where(mover => mover.FirstMarketValue > 0 && mover.LatestObservedAt > mover.FirstObservedAt)
+            .OrderByDescending(mover => Math.Abs(mover.PercentChange))
+            .ThenByDescending(mover => Math.Abs(mover.AbsoluteChange))
+            .Take(8)
+            .ToList();
+    }
+
+    private static IReadOnlyList<HistoryRestockOpportunity> LoadUpcomingRestocks(
+        SqliteConnection connection,
+        long refreshId,
+        DateTimeOffset now)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT r.item_name,
+                   r.country_code,
+                   COALESCE(i.country_name, r.country_code) AS country_name,
+                   r.restock_estimate_utc,
+                   r.stockout_estimate_utc,
+                   r.restock_confidence,
+                   r.stockout_confidence
+            FROM restock_snapshots r
+            LEFT JOIN item_snapshots i
+              ON i.refresh_id = r.refresh_id
+             AND i.item_id = r.item_id
+             AND i.country_code = r.country_code
+            WHERE r.refresh_id = $refresh_id
+              AND r.restock_estimate_utc IS NOT NULL
+              AND r.restock_estimate_utc >= $earliest_restock
+            ORDER BY r.restock_estimate_utc ASC
+            LIMIT 40;
+            """;
+        command.Parameters.AddWithValue("$refresh_id", refreshId);
+        command.Parameters.AddWithValue("$earliest_restock", FormatUtc(now.Subtract(TimeSpan.FromMinutes(30))));
+
+        List<HistoryRestockOpportunity> restocks = new();
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            string countryCode = reader.GetString(1);
+            TimeSpan? flightDuration = TravelFlightTimes.GetFlightDuration(countryCode);
+            if (flightDuration is null)
+            {
+                continue;
+            }
+
+            DateTimeOffset restockAt = ParseUtc(reader.GetString(3));
+            DateTimeOffset? stockoutAt = ReadNullableDateTimeOffset(reader, 4);
+            DateTimeOffset latestArrival = restockAt.AddMinutes(30);
+            if (stockoutAt is not null && stockoutAt.Value < latestArrival)
+            {
+                latestArrival = stockoutAt.Value;
+            }
+
+            DateTimeOffset latestDeparture = latestArrival.Subtract(flightDuration.Value);
+            if (now > latestDeparture)
+            {
+                continue;
+            }
+
+            DateTimeOffset targetDeparture = restockAt.Subtract(flightDuration.Value);
+            DateTimeOffset suggestedDeparture = now > targetDeparture ? now : targetDeparture;
+            DateTimeOffset expectedArrival = suggestedDeparture.Add(flightDuration.Value);
+            if (expectedArrival > latestArrival)
+            {
+                continue;
+            }
+
+            restocks.Add(new HistoryRestockOpportunity(
+                reader.GetString(0),
+                countryCode,
+                reader.GetString(2),
+                restockAt,
+                stockoutAt,
+                ReadNullableString(reader, 5),
+                ReadNullableString(reader, 6),
+                flightDuration.Value,
+                suggestedDeparture,
+                latestDeparture,
+                expectedArrival));
+
+            if (restocks.Count >= 8)
+            {
+                break;
+            }
+        }
+
+        return restocks;
+    }
+
     private static decimal? ReadNullableDecimal(SqliteDataReader reader, int ordinal)
     {
         return reader.IsDBNull(ordinal)
             ? null
             : Convert.ToDecimal(reader.GetDouble(ordinal), CultureInfo.InvariantCulture);
+    }
+
+    private static string? ReadNullableString(SqliteDataReader reader, int ordinal)
+    {
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetString(ordinal);
+    }
+
+    private static DateTimeOffset? ReadNullableDateTimeOffset(SqliteDataReader reader, int ordinal)
+    {
+        return reader.IsDBNull(ordinal)
+            ? null
+            : ParseUtc(reader.GetString(ordinal));
+    }
+
+    private static int ExecuteScalarInt(SqliteConnection connection, string commandText, params (string Name, object Value)[] parameters)
+    {
+        object? value = ExecuteScalar(connection, commandText, parameters);
+        return value is null or DBNull
+            ? 0
+            : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    }
+
+    private static long? ExecuteScalarLongNullable(SqliteConnection connection, string commandText, params (string Name, object Value)[] parameters)
+    {
+        object? value = ExecuteScalar(connection, commandText, parameters);
+        return value is null or DBNull
+            ? null
+            : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    private static DateTimeOffset? ExecuteScalarDateTime(SqliteConnection connection, string commandText, params (string Name, object Value)[] parameters)
+    {
+        object? value = ExecuteScalar(connection, commandText, parameters);
+        return value is string text && !string.IsNullOrWhiteSpace(text)
+            ? ParseUtc(text)
+            : null;
+    }
+
+    private static object? ExecuteScalar(SqliteConnection connection, string commandText, params (string Name, object Value)[] parameters)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = commandText;
+        foreach ((string name, object value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return command.ExecuteScalar();
+    }
+
+    private static DateTimeOffset ParseUtc(string value)
+    {
+        return DateTimeOffset.Parse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
     }
 
     private static void ExecuteNonQuery(SqliteConnection connection, string commandText)
@@ -461,4 +885,20 @@ public sealed class HistoryDatabaseService
     {
         return value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
     }
+
+    private sealed record HistoryItemSampleRow(
+        DateTimeOffset ObservedAt,
+        string ItemName,
+        string CountryCode,
+        string CountryName,
+        int Quantity,
+        decimal Cost,
+        decimal? MarketValue,
+        decimal? EffectiveValue,
+        decimal? UnitProfit,
+        decimal? ProfitPerHour,
+        DateTimeOffset? RestockEstimateUtc,
+        DateTimeOffset? StockoutEstimateUtc,
+        string? RestockConfidence,
+        string? StockoutConfidence);
 }

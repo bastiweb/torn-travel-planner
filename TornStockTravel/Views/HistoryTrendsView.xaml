@@ -1,0 +1,416 @@
+<UserControl x:Class="TornStockTravel.Views.HistoryTrendsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto"
+                HorizontalScrollBarVisibility="Disabled">
+    <StackPanel>
+      <Border Background="#111827"
+              BorderBrush="#243044"
+              BorderThickness="1"
+              CornerRadius="8"
+              Padding="16"
+              Margin="0,0,0,14">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+
+          <StackPanel Margin="0,0,14,0">
+            <TextBlock Style="{StaticResource LabelTextStyle}" Text="History database" />
+            <TextBlock x:Name="HistoryStatusText"
+                       Style="{StaticResource ValueTextStyle}"
+                       Text="Waiting for data" />
+            <TextBlock x:Name="HistoryWindowText"
+                       Foreground="#94A3B8"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" Margin="0,0,14,0">
+            <TextBlock Style="{StaticResource LabelTextStyle}" Text="Refresh snapshots" />
+            <TextBlock x:Name="RefreshSnapshotCountText"
+                       Style="{StaticResource ValueTextStyle}"
+                       Text="-" />
+            <TextBlock x:Name="LatestItemCountText"
+                       Foreground="#94A3B8"
+                       FontSize="11"
+                       FontWeight="SemiBold" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="2" Margin="0,0,14,0">
+            <TextBlock Style="{StaticResource LabelTextStyle}" Text="Item samples" />
+            <TextBlock x:Name="ItemSnapshotCountText"
+                       Style="{StaticResource ValueTextStyle}"
+                       Text="-" />
+            <TextBlock x:Name="MarketSnapshotCountText"
+                       Foreground="#94A3B8"
+                       FontSize="11"
+                       FontWeight="SemiBold" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="3">
+            <TextBlock Style="{StaticResource LabelTextStyle}" Text="Restock samples" />
+            <TextBlock x:Name="RestockSnapshotCountText"
+                       Style="{StaticResource ValueTextStyle}"
+                       Text="-" />
+            <TextBlock Foreground="#94A3B8"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       Text="Used for future timing analysis" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Background="#111827"
+              BorderBrush="#243044"
+              BorderThickness="1"
+              CornerRadius="8"
+              Padding="16"
+              Margin="0,0,0,18">
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="2*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,14,0">
+              <TextBlock Text="Item detail"
+                         Foreground="#F8FAFC"
+                         FontSize="18"
+                         FontWeight="SemiBold" />
+              <TextBlock Text="SQLite-backed item history for the selected destination."
+                         Foreground="#94A3B8"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Style="{StaticResource LabelTextStyle}" Text="Item / destination" />
+              <ComboBox x:Name="HistoryItemBox"
+                        MinHeight="34"
+                        Background="#0B1120"
+                        BorderBrush="#334155"
+                        BorderThickness="1"
+                        Foreground="#F8FAFC"
+                        DisplayMemberPath="DisplayText"
+                        SelectionChanged="HistoryItemBox_SelectionChanged" />
+              <TextBlock x:Name="SelectedHistoryItemMetaText"
+                         Foreground="#94A3B8"
+                         FontSize="11"
+                         FontWeight="SemiBold"
+                         Margin="0,4,0,0"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock x:Name="ItemDetailEmptyText"
+                     Foreground="#94A3B8"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     Text="Select an item once history has been collected."
+                     Margin="0,14,0,0" />
+
+          <StackPanel x:Name="ItemDetailPanel"
+                      Margin="0,14,0,0"
+                      Visibility="Collapsed">
+            <TextBlock x:Name="ItemDetailTitleText"
+                       Foreground="#F8FAFC"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       TextWrapping="Wrap" />
+            <TextBlock x:Name="ItemDetailSnapshotText"
+                       Foreground="#94A3B8"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       Margin="0,2,0,12"
+                       TextWrapping="Wrap" />
+
+            <UniformGrid Columns="4" Margin="0,0,0,12">
+              <StackPanel Margin="0,0,12,10">
+                <TextBlock Style="{StaticResource LabelTextStyle}" Text="Latest stock" />
+                <TextBlock x:Name="ItemLatestStockText"
+                           Style="{StaticResource ValueTextStyle}"
+                           Text="-" />
+                <TextBlock x:Name="ItemZeroStockText"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel Margin="0,0,12,10">
+                <TextBlock Style="{StaticResource LabelTextStyle}" Text="Latest market" />
+                <TextBlock x:Name="ItemLatestMarketText"
+                           Style="{StaticResource ValueTextStyle}"
+                           Text="-" />
+                <TextBlock x:Name="ItemMarketRangeText"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel Margin="0,0,12,10">
+                <TextBlock Style="{StaticResource LabelTextStyle}" Text="Profit / h" />
+                <TextBlock x:Name="ItemLatestProfitPerHourText"
+                           Foreground="#FDBA74"
+                           FontSize="18"
+                           FontWeight="Bold"
+                           Text="-" />
+                <TextBlock x:Name="ItemAverageProfitPerHourText"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel Margin="0,0,0,10">
+                <TextBlock Style="{StaticResource LabelTextStyle}" Text="Restock / stockout" />
+                <TextBlock x:Name="ItemLatestRestockText"
+                           Foreground="#5EEAD4"
+                           FontSize="14"
+                           FontWeight="Bold"
+                           Text="-" />
+                <TextBlock x:Name="ItemLatestStockoutText"
+                           Foreground="#FCA5A5"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </StackPanel>
+            </UniformGrid>
+
+            <Grid Margin="0,0,0,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Foreground="#CBD5E1"
+                         FontSize="12"
+                         FontWeight="SemiBold">
+                <Run Text="Cost " />
+                <Run x:Name="ItemLatestCostRun" Text="-" />
+              </TextBlock>
+              <TextBlock Grid.Column="1"
+                         Foreground="#CBD5E1"
+                         FontSize="12"
+                         FontWeight="SemiBold">
+                <Run Text="Value used " />
+                <Run x:Name="ItemLatestEffectiveRun" Text="-" />
+              </TextBlock>
+              <TextBlock Grid.Column="2"
+                         Foreground="#CBD5E1"
+                         FontSize="12"
+                         FontWeight="SemiBold">
+                <Run Text="Unit profit " />
+                <Run x:Name="ItemLatestUnitProfitRun" Text="-" />
+              </TextBlock>
+              <TextBlock Grid.Column="3"
+                         x:Name="ItemLatestConfidenceText"
+                         Foreground="#94A3B8"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         TextWrapping="Wrap" />
+            </Grid>
+
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="Latest top opportunities"
+                 Foreground="#F8FAFC"
+                 FontSize="18"
+                 FontWeight="SemiBold"
+                 Margin="0,0,0,8" />
+      <TextBlock x:Name="TopProfitEmptyText"
+                 Foreground="#94A3B8"
+                 FontSize="12"
+                 FontWeight="SemiBold"
+                 Text="No profitable latest snapshot found yet."
+                 Visibility="Collapsed"
+                 Margin="0,0,0,10" />
+      <ItemsControl x:Name="TopProfitItemsList" Margin="0,0,0,18">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Width="270"
+                    Background="#111827"
+                    BorderBrush="#334155"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="12"
+                    Margin="0,0,10,10">
+              <StackPanel>
+                <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                           Foreground="#F8FAFC"
+                           FontSize="15"
+                           FontWeight="Bold"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="{Binding DestinationText, Mode=OneWay}"
+                           Foreground="#93C5FD"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Margin="0,2,0,8"
+                           TextWrapping="Wrap" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Profit / h"
+                               Foreground="#64748B"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                    <TextBlock Text="{Binding ProfitPerHourText, Mode=OneWay}"
+                               Foreground="#FDBA74"
+                               FontSize="16"
+                               FontWeight="Bold" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="Latest stock"
+                               Foreground="#64748B"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                    <TextBlock Text="{Binding QuantityText, Mode=OneWay}"
+                               Foreground="#CBD5E1"
+                               FontSize="13"
+                               FontWeight="SemiBold" />
+                  </StackPanel>
+                </Grid>
+                <TextBlock Text="{Binding ProfitText, Mode=OneWay}"
+                           Foreground="#FACC15"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Margin="0,8,0,0" />
+                <TextBlock Text="{Binding MarketValueText, Mode=OneWay}"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="{Binding UnitProfitText, Mode=OneWay}"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Margin="0,0,8,0">
+          <TextBlock Text="Market movers"
+                     Foreground="#F8FAFC"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     Margin="0,0,0,8" />
+          <TextBlock x:Name="MarketMoversEmptyText"
+                     Foreground="#94A3B8"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     Text="More market snapshots are needed before movement can be calculated."
+                     Visibility="Collapsed"
+                     Margin="0,0,0,10" />
+          <ItemsControl x:Name="MarketMoversList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#111827"
+                        BorderBrush="#334155"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10"
+                        Margin="0,0,0,8">
+                  <StackPanel>
+                    <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                               Foreground="#F8FAFC"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding ChangeText, Mode=OneWay}"
+                               Foreground="#FDBA74"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding ValueText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+          <TextBlock Text="Upcoming restocks"
+                     Foreground="#F8FAFC"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     Margin="0,0,0,8" />
+          <TextBlock x:Name="UpcomingRestocksEmptyText"
+                     Foreground="#94A3B8"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     Text="No upcoming restock estimates in the latest snapshot."
+                     Visibility="Collapsed"
+                     Margin="0,0,0,10" />
+          <ItemsControl x:Name="UpcomingRestocksList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#111827"
+                        BorderBrush="#334155"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10"
+                        Margin="0,0,0,8">
+                  <StackPanel>
+                    <TextBlock Text="{Binding ItemName, Mode=OneWay}"
+                               Foreground="#F8FAFC"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DestinationText, Mode=OneWay}"
+                               Foreground="#93C5FD"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding RestockTimeText, Mode=OneWay}"
+                               Foreground="#5EEAD4"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding ReachabilityText, Mode=OneWay}"
+                               Foreground="#FDBA74"
+                               FontSize="11"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding FlightDurationText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding StockoutTimeText, Mode=OneWay}"
+                               Foreground="#FCA5A5"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding ConfidenceText, Mode=OneWay}"
+                               Foreground="#94A3B8"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

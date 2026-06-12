@@ -40,6 +40,7 @@ public sealed class AppSettingsService
                 storedSettings?.RestockAvailabilityMode);
             IReadOnlyList<PlannerPreset> plannerPresets = NormalizePlannerPresets(storedSettings?.PlannerPresets);
             IReadOnlyList<string> watchlistItemNames = NormalizeStringList(storedSettings?.WatchlistItemNames);
+            IReadOnlyList<string> globalExcludedItemQueries = NormalizeStringList(storedSettings?.GlobalExcludedItemQueries);
             string discordWebhookUrl = !string.IsNullOrWhiteSpace(storedSettings?.ProtectedDiscordWebhookUrl)
                 ? Unprotect(storedSettings.ProtectedDiscordWebhookUrl)
                 : storedSettings?.DiscordWebhookUrl ?? string.Empty;
@@ -58,6 +59,7 @@ public sealed class AppSettingsService
                     storedSettings.PendingReleaseNotes,
                     plannerPresets,
                     watchlistItemNames,
+                    globalExcludedItemQueries,
                     storedSettings.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
                     departureReminderMinutes,
                     storedSettings.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
@@ -81,6 +83,7 @@ public sealed class AppSettingsService
                 storedSettings?.PendingReleaseNotes,
                 plannerPresets,
                 watchlistItemNames,
+                globalExcludedItemQueries,
                 storedSettings?.DepartureRemindersEnabled ?? AppSettings.DefaultDepartureRemindersEnabled,
                 departureReminderMinutes,
                 storedSettings?.RestockAlertsEnabled ?? AppSettings.DefaultRestockAlertsEnabled,
@@ -119,6 +122,7 @@ public sealed class AppSettingsService
                 preset.CarryCapacity,
                 preset.ActiveWindowHours)).ToList(),
             settings.WatchlistItemNames.ToList(),
+            settings.GlobalExcludedItemQueries.ToList(),
             settings.DepartureRemindersEnabled,
             settings.DepartureReminderMinutes,
             settings.RestockAlertsEnabled,
@@ -251,6 +255,7 @@ public sealed record AppSettings(
     string? PendingReleaseNotes,
     IReadOnlyList<PlannerPreset> PlannerPresets,
     IReadOnlyList<string> WatchlistItemNames,
+    IReadOnlyList<string> GlobalExcludedItemQueries,
     bool DepartureRemindersEnabled,
     int DepartureReminderMinutes,
     bool RestockAlertsEnabled,
@@ -292,6 +297,7 @@ public sealed record AppSettings(
             null,
             AppSettingsService.GetDefaultPlannerPresets(),
             Array.Empty<string>(),
+            Array.Empty<string>(),
             DefaultDepartureRemindersEnabled,
             DefaultDepartureReminderMinutes,
             DefaultRestockAlertsEnabled,
@@ -318,6 +324,7 @@ internal sealed record StoredSettings(
     string? PendingReleaseNotes,
     List<StoredPlannerPreset>? PlannerPresets,
     List<string>? WatchlistItemNames,
+    List<string>? GlobalExcludedItemQueries,
     bool? DepartureRemindersEnabled,
     int? DepartureReminderMinutes,
     bool? RestockAlertsEnabled,

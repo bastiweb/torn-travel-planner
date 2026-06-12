@@ -8,7 +8,6 @@ using WpfButton = System.Windows.Controls.Button;
 using WpfCheckBox = System.Windows.Controls.CheckBox;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfMessageBox = System.Windows.MessageBox;
-using WpfTextBox = System.Windows.Controls.TextBox;
 
 namespace TornStockTravel;
 
@@ -19,6 +18,7 @@ public partial class MainWindow : Window
     private readonly AppSettingsService _settingsService;
     private readonly TravelRefreshService _travelRefreshService;
     private readonly UpdateCheckerService _updateCheckerService;
+    private readonly HistoryDatabaseService _historyDatabaseService;
     private readonly DesktopNotificationService _notificationService;
     private readonly DiscordWebhookService _discordWebhookService;
     private readonly DispatcherTimer _countdownTimer;
@@ -39,17 +39,24 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _sentAlertKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _isApplyingPlannerPreset;
     private bool _isCheckingAlerts;
+    private bool _isUpdatingHistoryOverview;
     private bool _nerveNearFullAlertActive;
     private TravelPlannerSessionPlan? _currentPlannerPlan;
+    private IReadOnlyList<TravelDestination> _sourceDestinations = Array.Empty<TravelDestination>();
     private IReadOnlyList<TravelDestination> _allDestinations = Array.Empty<TravelDestination>();
 
     public MainWindow()
     {
         InitializeComponent();
         Title = BuildWindowTitle();
+        StatusHeader.RefreshRequested += StatusHeader_RefreshRequested;
+        ErrorToast.DismissRequested += ErrorToast_DismissRequested;
+        StockOverview.BazaarPriceCommitRequested = SaveBazaarPriceAsync;
+        HistoryTrends.ItemSelectionChanged += HistoryTrends_ItemSelectionChanged;
 
         _settingsService = new AppSettingsService();
         _updateCheckerService = new UpdateCheckerService();
+        _historyDatabaseService = new HistoryDatabaseService();
         _notificationService = new DesktopNotificationService();
         _discordWebhookService = new DiscordWebhookService();
         _settings = _settingsService.Load();
@@ -60,6 +67,7 @@ public partial class MainWindow : Window
         RefreshIntervalBox.Text = _settings.RefreshIntervalMinutes.ToString("N0");
         MaxSpendPercentBox.Text = _settings.MaxSpendPercent.ToString("N0");
         WatchlistBox.Text = string.Join(", ", _settings.WatchlistItemNames);
+        ExcludedItemsBox.Text = string.Join(", ", _settings.GlobalExcludedItemQueries);
         InitializeAlertSettings();
         SelectRestockAvailabilityMode(_settings.RestockAvailabilityMode);
         RestockAvailabilityModeBox.SelectionChanged += RestockAvailabilityModeBox_SelectionChanged;
@@ -112,6 +120,10 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        StatusHeader.RefreshRequested -= StatusHeader_RefreshRequested;
+        ErrorToast.DismissRequested -= ErrorToast_DismissRequested;
+        StockOverview.BazaarPriceCommitRequested = null;
+        HistoryTrends.ItemSelectionChanged -= HistoryTrends_ItemSelectionChanged;
         _travelRefreshService.StateChanged -= OnTravelStateChanged;
         RestockAvailabilityModeBox.SelectionChanged -= RestockAvailabilityModeBox_SelectionChanged;
         PlannerStrategyBox.SelectionChanged -= PlannerStrategyBox_SelectionChanged;
@@ -127,9 +139,14 @@ public partial class MainWindow : Window
         _discordWebhookService.Dispose();
     }
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private async void StatusHeader_RefreshRequested(object? sender, EventArgs e)
     {
         await _travelRefreshService.RefreshNowAsync();
+    }
+
+    private async void HistoryTrends_ItemSelectionChanged(object? sender, Views.HistoryItemSelectionChangedEventArgs e)
+    {
+        await UpdateHistoryItemDetailAsync(e.SelectedItem);
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -204,7 +221,7 @@ public partial class MainWindow : Window
 
         try
         {
-            RefreshButton.IsEnabled = false;
+            StatusHeader.IsRefreshEnabled = false;
             CheckForUpdatesButton.IsEnabled = false;
             StatusText.Text = "Downloading update...";
             UpdateStatusText.Text = "Downloading update...";
@@ -228,7 +245,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            RefreshButton.IsEnabled = true;
+            StatusHeader.IsRefreshEnabled = true;
             CheckForUpdatesButton.IsEnabled = true;
             StatusText.Text = "Ready";
             UpdateStatusText.Text = "Update failed";
@@ -484,6 +501,70 @@ public partial class MainWindow : Window
         UpdateTravelPlanner();
     }
 
+    private void ExcludeTripItemButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton button || button.Tag is not TravelPlanCandidate candidate)
+        {
+            return;
+        }
+
+        AddGlobalExcludedItem(candidate.ItemName);
+        ExcludedItemsStatusText.Text = $"Excluded: {candidate.ItemName}";
+        PlannerWindowSummaryText.Text = $"Excluded item globally: {candidate.ItemName}";
+        RefreshVisibleDataFromSettings();
+    }
+
+    private void ExcludeTripCountryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton button || button.Tag is not TravelPlanCandidate candidate)
+        {
+            return;
+        }
+
+        CheckPlannerExcludedCountry(candidate.DestinationCode);
+        PlannerWindowSummaryText.Text = $"Excluded country: {candidate.DestinationText}";
+        UpdateTravelPlanner();
+    }
+
+    private void AddPlannerExcludedItem(string itemName)
+    {
+        List<string> excludedItems = SplitPlannerFilterText(PlannerExcludedItemsBox.Text).ToList();
+        if (!excludedItems.Contains(itemName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            excludedItems.Add(itemName);
+        }
+
+        PlannerExcludedItemsBox.Text = string.Join(", ", excludedItems);
+    }
+
+    private void AddGlobalExcludedItem(string itemName)
+    {
+        List<string> excludedItems = SplitPlannerFilterText(ExcludedItemsBox.Text).ToList();
+        if (!excludedItems.Contains(itemName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            excludedItems.Add(itemName);
+        }
+
+        _settings = _settings with
+        {
+            GlobalExcludedItemQueries = excludedItems
+        };
+        _settingsService.Save(_settings);
+        ExcludedItemsBox.Text = string.Join(", ", _settings.GlobalExcludedItemQueries);
+    }
+
+    private void CheckPlannerExcludedCountry(string countryCode)
+    {
+        foreach (WpfCheckBox checkBox in PlannerExcludedCountryPanel.Children.OfType<WpfCheckBox>())
+        {
+            if (checkBox.Tag is string tag && string.Equals(tag, countryCode, StringComparison.OrdinalIgnoreCase))
+            {
+                checkBox.IsChecked = true;
+                break;
+            }
+        }
+    }
+
     private async void SaveBuyCapacityButton_Click(object sender, RoutedEventArgs e)
     {
         string value = BuyCapacityBox.Text.Trim();
@@ -530,26 +611,6 @@ public partial class MainWindow : Window
         await _travelRefreshService.RefreshNowAsync();
     }
 
-    private async void BazaarPriceBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is WpfTextBox textBox)
-        {
-            await SaveBazaarPriceAsync(textBox);
-        }
-    }
-
-    private async void BazaarPriceBox_KeyDown(object sender, WpfKeyEventArgs e)
-    {
-        if (e.Key != Key.Enter || sender is not WpfTextBox textBox)
-        {
-            return;
-        }
-
-        e.Handled = true;
-        await SaveBazaarPriceAsync(textBox);
-        Keyboard.ClearFocus();
-    }
-
     private void OnTravelStateChanged(object? sender, TravelRefreshState state)
     {
         Dispatcher.Invoke(() => ApplyState(state));
@@ -569,16 +630,108 @@ public partial class MainWindow : Window
         UpdateForecastStatus();
         LastUpdatedText.Text = FormatDate(state.LastUpdated);
         NextRefreshText.Text = FormatDate(state.NextRefreshAt);
-        _allDestinations = state.Destinations;
+        _sourceDestinations = state.Destinations;
+        _allDestinations = ApplyGlobalExcludedItems(_sourceDestinations);
         EndpointText.Text = state.Endpoint.ToString();
         IntervalText.Text = $"Interval: {state.RefreshInterval.TotalMinutes:0} minutes";
-        RefreshButton.IsEnabled = state.Status != TravelRefreshStatus.Loading;
+        StatusHeader.IsRefreshEnabled = state.Status != TravelRefreshStatus.Loading;
         UpdateRecommendation();
         UpdateTravelPlanner();
         UpdateDashboardIntelligence();
-        ApplyDashboardFilter();
+        RecordCountText.Text = _allDestinations.Sum(destination => destination.ItemCount).ToString("N0");
+        StockOverview.SetDestinations(_allDestinations);
+        QueueHistoryOverviewUpdate();
 
         ShowErrorToastIfNeeded(state.Error);
+    }
+
+    private void RefreshVisibleDataFromSettings()
+    {
+        _allDestinations = ApplyGlobalExcludedItems(_sourceDestinations);
+        UpdateRecommendation();
+        UpdateTravelPlanner();
+        UpdateDashboardIntelligence();
+        RecordCountText.Text = _allDestinations.Sum(destination => destination.ItemCount).ToString("N0");
+        StockOverview.SetDestinations(_allDestinations);
+        QueueHistoryOverviewUpdate();
+    }
+
+    private IReadOnlyList<TravelDestination> ApplyGlobalExcludedItems(IReadOnlyList<TravelDestination> destinations)
+    {
+        IReadOnlyList<string> excludedQueries = _settings.GlobalExcludedItemQueries;
+        if (excludedQueries.Count == 0)
+        {
+            return destinations;
+        }
+
+        return destinations
+            .Select(destination => destination with
+            {
+                Items = destination.Items
+                    .Where(item => !IsGloballyExcludedItem(item.Name, excludedQueries))
+                    .ToList()
+            })
+            .Where(destination => destination.ItemCount > 0)
+            .ToList();
+    }
+
+    private static bool IsGloballyExcludedItem(string itemName, IReadOnlyList<string> excludedQueries)
+    {
+        return excludedQueries.Any(query =>
+            itemName.Contains(query, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    private void QueueHistoryOverviewUpdate()
+    {
+        if (_isUpdatingHistoryOverview)
+        {
+            return;
+        }
+
+        _isUpdatingHistoryOverview = true;
+        _ = UpdateHistoryOverviewAsync();
+    }
+
+    private async Task UpdateHistoryOverviewAsync()
+    {
+        try
+        {
+            HistoryOverview overview = await Task.Run(() => _historyDatabaseService.BuildOverview(DateTimeOffset.Now));
+            HistoryTrends.SetOverview(overview);
+            await UpdateHistoryItemDetailAsync(HistoryTrends.SelectedHistoryItem);
+        }
+        catch (Exception ex)
+        {
+            AppLogService.Warning($"History overview update failed: {ex.Message}");
+        }
+        finally
+        {
+            _isUpdatingHistoryOverview = false;
+        }
+    }
+
+    private async Task UpdateHistoryItemDetailAsync(HistoryItemOption? selectedItem)
+    {
+        if (selectedItem is null)
+        {
+            HistoryTrends.SetItemDetail(null);
+            return;
+        }
+
+        try
+        {
+            HistoryItemDetail? detail = await Task.Run(() =>
+                _historyDatabaseService.BuildItemDetail(
+                    selectedItem.ItemId,
+                    selectedItem.CountryCode,
+                    DateTimeOffset.Now));
+            HistoryTrends.SetItemDetail(detail);
+        }
+        catch (Exception ex)
+        {
+            HistoryTrends.SetItemDetail(null);
+            AppLogService.Warning($"History item detail update failed: {ex.Message}");
+        }
     }
 
     private static string GetStatusLabel(TravelRefreshStatus status)
@@ -601,16 +754,6 @@ public partial class MainWindow : Window
             : date.Value.LocalDateTime.ToString("dd.MM.yyyy HH:mm:ss");
     }
 
-    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        ApplyDashboardFilter();
-    }
-
-    private void CountryFilter_Changed(object sender, RoutedEventArgs e)
-    {
-        ApplyDashboardFilter();
-    }
-
     private void SaveWatchlistButton_Click(object sender, RoutedEventArgs e)
     {
         _settings = _settings with
@@ -622,48 +765,19 @@ public partial class MainWindow : Window
         UpdateDashboardIntelligence();
     }
 
-    private void ApplyDashboardFilter()
+    private void SaveExcludedItemsButton_Click(object sender, RoutedEventArgs e)
     {
-        string query = SearchBox.Text.Trim();
-        HashSet<string> selectedCountryCodes = GetSelectedCountryCodes();
-        IReadOnlyList<TravelDestination> visibleDestinations = _allDestinations;
-
-        if (selectedCountryCodes.Count > 0)
+        IReadOnlyList<string> excludedItems = SplitPlannerFilterText(ExcludedItemsBox.Text);
+        _settings = _settings with
         {
-            visibleDestinations = visibleDestinations
-                .Where(destination => selectedCountryCodes.Contains(destination.Code))
-                .ToList();
-        }
-
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            visibleDestinations = visibleDestinations
-                .Select(destination =>
-                {
-                    bool destinationMatches =
-                        destination.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                        || destination.Code.Contains(query, StringComparison.CurrentCultureIgnoreCase);
-
-                    IReadOnlyList<TravelItem> items = destinationMatches
-                        ? destination.Items
-                        : destination.Items
-                            .Where(item => item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-                            .ToList();
-
-                    return destination with
-                    {
-                        Items = items
-                    };
-                })
-                .Where(destination => destination.ItemCount > 0)
-                .ToList();
-        }
-
-        DestinationList.ItemsSource = visibleDestinations;
-        RecordCountText.Text = visibleDestinations.Sum(destination => destination.ItemCount).ToString("N0");
-        EmptyDashboardText.Visibility = visibleDestinations.Count == 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+            GlobalExcludedItemQueries = excludedItems
+        };
+        _settingsService.Save(_settings);
+        ExcludedItemsBox.Text = string.Join(", ", _settings.GlobalExcludedItemQueries);
+        ExcludedItemsStatusText.Text = excludedItems.Count == 0
+            ? "No global exclusions"
+            : $"{excludedItems.Count:N0} excluded";
+        RefreshVisibleDataFromSettings();
     }
 
     private void UpdateDashboardIntelligence()
@@ -763,15 +877,6 @@ public partial class MainWindow : Window
                 ? "Fresh"
                 : "Live";
         ForecastQualityDetailsText.Text = $"{_forecastSnapshot.ItemCount:N0} items, {_forecastSnapshot.WindowCount:N0} windows ({freshness})";
-    }
-
-    private HashSet<string> GetSelectedCountryCodes()
-    {
-        return CountryFilterPanel.Children
-            .OfType<WpfCheckBox>()
-            .Where(checkBox => checkBox.IsChecked == true && checkBox.Tag is string)
-            .Select(checkBox => ((string)checkBox.Tag).ToLowerInvariant())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private void CountdownTimer_Tick(object? sender, EventArgs e)
@@ -919,8 +1024,7 @@ public partial class MainWindow : Window
         }
 
         _lastShownError = error;
-        ErrorToastText.Text = error;
-        ErrorToast.Visibility = Visibility.Visible;
+        ErrorToast.ShowMessage(error);
         _errorToastTimer.Stop();
         _errorToastTimer.Start();
     }
@@ -1091,7 +1195,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DismissErrorToastButton_Click(object sender, RoutedEventArgs e)
+    private void ErrorToast_DismissRequested(object? sender, EventArgs e)
     {
         HideErrorToast();
     }
@@ -1099,7 +1203,7 @@ public partial class MainWindow : Window
     private void HideErrorToast()
     {
         _errorToastTimer.Stop();
-        ErrorToast.Visibility = Visibility.Collapsed;
+        ErrorToast.Hide();
     }
 
     private static string FormatDuration(TimeSpan duration)
@@ -1114,14 +1218,14 @@ public partial class MainWindow : Window
             : $"{duration.Minutes:00}:{duration.Seconds:00}";
     }
 
-    private async Task SaveBazaarPriceAsync(WpfTextBox textBox)
+    private async Task<string?> SaveBazaarPriceAsync(int itemId, string value)
     {
-        if (textBox.Tag is not int itemId || itemId <= 0)
+        if (itemId <= 0)
         {
-            return;
+            return null;
         }
 
-        string value = textBox.Text.Trim();
+        value = value.Trim();
         Dictionary<int, decimal> bazaarPrices = _settings.BazaarPrices.ToDictionary(
             entry => entry.Key,
             entry => entry.Value);
@@ -1130,7 +1234,7 @@ public partial class MainWindow : Window
         {
             if (!bazaarPrices.Remove(itemId))
             {
-                return;
+                return null;
             }
         }
         else if (TryParseMoney(value, out decimal bazaarPrice) && bazaarPrice > 0)
@@ -1138,17 +1242,16 @@ public partial class MainWindow : Window
             if (bazaarPrices.TryGetValue(itemId, out decimal existing)
                 && existing == bazaarPrice)
             {
-                return;
+                return null;
             }
 
             bazaarPrices[itemId] = bazaarPrice;
         }
         else
         {
-            textBox.Text = bazaarPrices.TryGetValue(itemId, out decimal existing)
+            return bazaarPrices.TryGetValue(itemId, out decimal existing)
                 ? existing.ToString("N0")
                 : string.Empty;
-            return;
         }
 
         _settings = _settings with
@@ -1158,6 +1261,7 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         _travelRefreshService.SetBazaarPrices(_settings.BazaarPrices);
         await _travelRefreshService.RefreshNowAsync();
+        return null;
     }
 
     private static bool TryParseMoney(string value, out decimal parsed)
